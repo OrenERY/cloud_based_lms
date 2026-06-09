@@ -1,0 +1,46 @@
+# =====================================================
+#  .gitignore – LMS UNSAP Kubernetes HPA Prototype
+# =====================================================
+
+# ── Python ──────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Virtual Environment ────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Kubernetes binaries (jangan commit binary besar) ─
+kubectl
+minikube-linux-amd64
+
+# ── Generated files ────────────────────────────────
+# lms-setup.yaml di-generate otomatis oleh sync.py
+lms-setup.yaml
+
+# ── Locust test results (HTML reports) ─────────────
+result/*.html
+
+# ── OS files ───────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── IDE / Editor ───────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Personal / Thesis Reference ────────────────────
+panduan_jurnal_lms.md
+

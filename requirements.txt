@@ -1,0 +1,2 @@
+# LMS UNSAP – Kubernetes HPA Load Testing Dependencies
+locust>=2.0

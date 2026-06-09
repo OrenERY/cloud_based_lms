@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dasbor | LMS UNSAP</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body class="page-dashboard">
+
+    <div class="site-header">
+      <a href="index.html">LMS UNSAP</a>
+    </div>
+
+    <div class="dash-wrap">
+
+      <!-- KOLOM KIRI: Kursus -->
+      <section class="main-col">
+        <div class="card">
+          <div class="card-header">
+            <h2>Kursus yang baru-baru ini diakses</h2>
+            <div class="btn-group">
+              <button class="btn btn-sm">&lsaquo;</button>
+              <button class="btn btn-sm">&rsaquo;</button>
+            </div>
+          </div>
+
+          <div class="course-item">
+            <div style="flex:1;">
+              <div class="course-category">MATKUL 1</div>
+              <div class="course-name">Matkul 1 - Kelas A</div>
+              <div class="badge-published">Published</div>
+              <div class="progress-row">
+                <div class="progress-track"><div class="progress-fill" style="width:67%"></div></div>
+                <span class="progress-pct">67% selesai</span>
+              </div>
+              <p class="course-desc">
+                Deskripsi singkat untuk Matkul 1. Mata kuliah ini membahas berbagai topik
+                penting yang relevan dengan bidang studi mahasiswa. Materi mencakup teori
+                dan praktik yang dirancang untuk meningkatkan kompetensi dan keterampilan
+                mahasiswa secara menyeluruh.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- KOLOM KANAN: Linimasa + File Privat -->
+      <aside class="sidebar">
+        <div class="card">
+          <div class="card-header">
+            <h2>Linimasa</h2>
+            <div class="btn-group">
+              <button class="btn btn-sm">Semua</button>
+              <button class="btn btn-sm">Sortir</button>
+            </div>
+          </div>
+
+          <div class="timeline-date">Senin, 15 Juni 2026</div>
+          <div class="timeline-item">
+            <a class="timeline-link" href="tugas.html">Tugas 1 - Pengumpulan... 00:00</a>
+            <div class="timeline-sub">Matkul 2 - Kelas A</div>
+            <div class="timeline-sub">Tambahkan pengajuan (tuga</div>
+          </div>
+
+          <div class="show-row">
+            <span>Tampilkan</span>
+            <select class="show-select">
+              <option>25</option>
+              <option>50</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>File-file privat</h2>
+          </div>
+          <p class="file-empty">Tidak ada file tersedia</p>
+        </div>
+      </aside>
+    </div>
+
+    <footer>
+      Copyright &copy; 2022 &middot; Universitas Sebelas April. All Rights Reserved.
+    </footer>
+
+  </body>
+</html>

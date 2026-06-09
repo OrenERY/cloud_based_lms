@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pengumpulan Tugas | LMS UNSAP</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body class="page-tugas">
+
+    <div class="site-header">
+      <a href="index.html">LMS UNSAP</a>
+    </div>
+
+    <!-- Strip gradient breadcrumb (khusus halaman tugas) -->
+    <div class="breadcrumb-strip">
+      <a class="bc-back" href="index.html">&larr; Back to Course</a>
+      <span class="bc-title">Matkul 2 - Kelas A</span>
+    </div>
+
+    <main class="tugas-wrap">
+
+      <h1 class="page-title">Tugas 1 - Pengumpulan Dokumen</h1>
+      <p class="page-subtitle">dikumpulkan dalam dokumen .pdf</p>
+
+      <!-- STATUS -->
+      <h2 class="section-heading">Status pengumpulan</h2>
+      <table class="status-table">
+        <tbody>
+          <tr>
+            <td>Status<br>pengumpulan</td>
+            <td class="text-danger" id="status-submission">Tidak ada upaya</td>
+          </tr>
+          <tr>
+            <td>Status<br>penilaian</td>
+            <td class="text-warning">Tidak dinilai</td>
+          </tr>
+          <tr>
+            <td>Batas waktu</td>
+            <td><strong>Senin, 15 Juni 2026, 00:00</strong></td>
+          </tr>
+          <tr>
+            <td>Waktu tersisa</td>
+            <td class="text-info" id="countdown">Menghitung...</td>
+          </tr>
+          <tr>
+            <td>Pemutakhiran<br>terakhir</td>
+            <td class="text-muted">-</td>
+          </tr>
+          <tr>
+            <td>Komentar<br>pengumpulan</td>
+            <td>
+              <button class="comment-toggle" id="btn-toggle-comment">&rsaquo; Komentar (0)</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- TOMBOL PENGAJUAN -->
+      <div class="submit-block">
+        <button class="btn btn-dark" id="btn-add-submission" onclick="handleSubmit()">
+          Tambahkan pengajuan (tugas/laporan)
+        </button>
+        <p class="submit-note" id="submit-note">Anda belum mengirimkannya.</p>
+      </div>
+
+      <!-- TEKS ONLINE -->
+      <div class="form-section">
+        <div class="form-label">Teks online</div>
+        <div class="form-body">
+          <div class="editor-toolbar">
+            <button class="tb-btn">P</button>
+            <div class="tb-sep"></div>
+            <button class="tb-btn">A</button>
+            <button class="tb-btn"><strong>B</strong></button>
+            <button class="tb-btn"><em>I</em></button>
+            <div class="tb-sep"></div>
+            <button class="tb-btn">=</button>
+            <button class="tb-btn">=</button>
+            <div class="tb-sep"></div>
+            <button class="tb-btn">&raquo;</button>
+            <button class="tb-btn">&laquo;</button>
+            <div class="tb-sep"></div>
+            <button class="tb-btn">-</button>
+            <button class="tb-btn">1</button>
+            <div class="tb-sep"></div>
+            <button class="tb-btn">#</button>
+            <button class="tb-btn">x</button>
+            <div class="tb-sep"></div>
+            <button class="tb-btn">&lt;&gt;</button>
+          </div>
+          <textarea
+            class="editor-area"
+            id="editor-text"
+            placeholder="Tulis keterangan pengumpulan di sini..."
+          ></textarea>
+        </div>
+      </div>
+
+      <!-- PENGIRIMAN BERKAS -->
+      <div class="form-section">
+        <div class="form-label">Pengiriman berkas</div>
+        <div class="form-body">
+          <div class="upload-meta">
+            <span>Ukuran file maksimum: 50MB, jumlah file maks: 50</span>
+            <div class="btn-group">
+              <button class="btn btn-sm">+</button>
+              <button class="btn btn-sm">URL</button>
+            </div>
+          </div>
+
+          <div class="file-label-row">File</div>
+
+          <div
+            class="drop-zone"
+            id="drop-zone"
+            onclick="document.getElementById('file-input').click()"
+            ondragover="event.preventDefault(); this.style.borderColor='#80bdff';"
+            ondragleave="this.style.borderColor='';"
+            ondrop="handleDrop(event)"
+          >
+            <div class="drop-arrow">&darr;</div>
+            <div class="drop-text">
+              Anda dapat menarik atau menjatuhkan file di sini untuk menambahkannya,
+              atau <a href="#" onclick="return false;">klik untuk memilih file</a>
+              dari perangkat Anda.
+            </div>
+          </div>
+
+          <input type="file" id="file-input" hidden accept=".pdf,.doc,.docx,.zip" multiple />
+          <div id="file-list"></div>
+        </div>
+      </div>
+
+      <!-- TOMBOL AKSI -->
+      <div class="action-row">
+        <button class="btn" id="btn-simpan" onclick="handleSubmit()">Simpan perubahan</button>
+        <button class="btn" onclick="window.location.href='index.html'">Batal</button>
+      </div>
+
+    </main>
+
+    <footer>
+      Copyright &copy; 2022 &middot; Universitas Sebelas April. All Rights Reserved.
+    </footer>
+
+    <script>
+      function updateCountdown() {
+        var deadline = new Date('2026-06-15T00:00:00+07:00');
+        var diff = deadline - new Date();
+        var el = document.getElementById('countdown');
+        if (diff <= 0) {
+          el.textContent = 'Batas waktu telah lewat';
+          el.className = 'text-danger';
+          return;
+        }
+        var d = Math.floor(diff / 86400000);
+        var h = Math.floor((diff % 86400000) / 3600000);
+        el.textContent = d + ' hari ' + h + ' jam';
+      }
+      updateCountdown();
+      setInterval(updateCountdown, 60000);
+
+      document.getElementById('file-input').addEventListener('change', function () {
+        renderFiles(Array.from(this.files));
+      });
+
+      function handleDrop(e) {
+        e.preventDefault();
+        document.getElementById('drop-zone').style.borderColor = '';
+        renderFiles(Array.from(e.dataTransfer.files));
+      }
+
+      function renderFiles(files) {
+        var list = document.getElementById('file-list');
+        files.forEach(function (f) {
+          var item = document.createElement('div');
+          item.className = 'file-item';
+          item.innerHTML =
+            '<span class="file-item-name">' + f.name + '</span>' +
+            '<span class="file-item-size">' + (f.size / 1024).toFixed(1) + ' KB</span>' +
+            '<button class="file-item-remove" onclick="this.closest(\'.file-item\').remove()">&times;</button>';
+          list.appendChild(item);
+        });
+      }
+
+      function handleSubmit() {
+        var btn = document.getElementById('btn-simpan');
+        btn.textContent = 'Menyimpan...';
+        btn.disabled = true;
+        setTimeout(function () {
+          document.getElementById('status-submission').textContent = 'Dikirim untuk penilaian';
+          document.getElementById('status-submission').className = 'text-success';
+          document.getElementById('submit-note').textContent = 'Pengajuan berhasil disimpan.';
+          document.getElementById('btn-add-submission').textContent = 'Edit pengajuan';
+          btn.textContent = 'Simpan perubahan';
+          btn.disabled = false;
+        }, 1200);
+      }
+
+      document.getElementById('btn-toggle-comment').addEventListener('click', function () {
+        this.innerHTML = this.innerHTML.includes('\u203A')
+          ? '&lsaquo; Komentar (0)'
+          : '&rsaquo; Komentar (0)';
+      });
+    </script>
+  </body>
+</html>
