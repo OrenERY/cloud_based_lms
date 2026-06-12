@@ -37,7 +37,7 @@ Repository ini berisi prototipe arsitektur klaster Kubernetes untuk menguji elas
 | `sync.py`                       | Script otomatis untuk sinkronisasi file HTML/CSS ke manifes Kubernetes dan deploy ulang ke cluster (nginx tuning, sidecar stress, HPA, Ingress)                                           |
 | `lms-setup.yaml`                | _Auto-generated_ — Manifes Kubernetes (dibuat oleh `sync.py`) berisi ConfigMaps, Deployment Nginx + Python sidecar, Service, Ingress, dan HPA                                              |
 | `locustfile.py`                 | Script pengujian Locust untuk mensimulasikan trafik mahasiswa concurrent                                                                                                                  |
-| `start.py`                      | **Full Streamlined Runner** — Otomatisasi penuh: Docker → Minikube → Metrics Server → Deploy → Koneksi → Load Test + Perbandingan LB & Biaya, semua dalam satu perintah `python start.py` |
+ | `start.py`                      | **Full Streamlined Runner** — Otomatisasi penuh: Docker -> Minikube -> Metrics Server -> Deploy -> Koneksi -> Load Test + Perbandingan LB & Biaya, semua dalam satu perintah `python start.py` |
 | `requirements.txt`              | Dependensi Python (Locust)                                                                                                                                                                |
 | `result/`                       | Folder laporan hasil pengujian (HTML report)                                                                                                                                              |
 | `result/perbandingan.html`      | _Auto-generated_ — Laporan perbandingan Load Balancing (tabel + grafik Chart.js)                                                                                                           |
@@ -88,7 +88,7 @@ python start.py
 > 2. Memulai Minikube jika belum berjalan (3 CPU, 4GB RAM)
 > 3. Mengaktifkan Metrics Server untuk HPA
 > 4. Deploy manifest terbaru ke klaster
-> 5. Mencari koneksi terbaik (tunnel → minikube service → port-forward)
+> 5. Mencari koneksi terbaik (tunnel -> minikube service -> port-forward)
 > 6. Menjalankan load test sesuai skenario pilihan
 >
 > **Tentang Tunnel**: Script akan otomatis mencoba `minikube tunnel`. Jika tunnel memerlukan hak Administrator dan gagal, script akan fallback ke port-forward dengan **150 users** (sudah cukup untuk memicu HPA dan menghasilkan data jurnal).
@@ -99,7 +99,7 @@ Anda akan disajikan menu interaktif:
 ```
 ╔══════════════════════════════════════════════════════╗
 ║   LMS UNSAP – Kubernetes HPA Load Test Runner       ║
-║   Otomatis: Setup → Deploy → Koneksi → Test         ║
+║   Otomatis: Setup - Deploy - Koneksi - Test         ║
 ╚══════════════════════════════════════════════════════╝
 
 ┌────────────────────────────────────────────────────┐
@@ -125,19 +125,19 @@ Anda akan disajikan menu interaktif:
 #### Deskripsi Pilihan Pengujian:
 
 * **Opsi 1: Skenario A: Tanpa HPA (Headless)**
-  * **Alur Otomatis**: Cek Docker → Start Minikube → Enable Metrics → Deploy manifest → Hapus HPA → Kunci 1 Pod → Setup koneksi → Load test → Simpan `result/tanpa_hpa.html`.
+  * **Alur Otomatis**: Cek Docker -> Start Minikube -> Enable Metrics -> Deploy manifest -> Hapus HPA -> Kunci 1 Pod -> Setup koneksi -> Load test -> Simpan `result/tanpa_hpa.html`.
   * **Tujuan**: Membuktikan server tunggal tradisional akan mengalami kelebihan beban (*high response times* & *failure rates*) saat lonjakan trafik terjadi.
 
 * **Opsi 2: Skenario B: Dengan HPA (Headless)**
-  * **Alur Otomatis**: Cek Docker → Start Minikube → Enable Metrics → Deploy manifest + HPA → Autoscaling (1-10 Pods) → Setup koneksi → Load test → Simpan `result/dengan_hpa.html`.
+  * **Alur Otomatis**: Cek Docker -> Start Minikube -> Enable Metrics -> Deploy manifest + HPA -> Autoscaling (1-10 Pods) -> Setup koneksi -> Load test -> Simpan `result/dengan_hpa.html`.
   * **Tujuan**: Membuktikan keandalan autoscaling dalam membagi beban trafik secara otomatis ke pod-pod baru sehingga *failure rate* ditekan ke tingkat minimal/0%.
 
 * **Opsi 3: Uji Interaktif (Locust Web UI)**
-  * **Alur Otomatis**: Full setup → Membuka LMS dan Locust Web UI (`http://localhost:8089`) di browser.
+  * **Alur Otomatis**: Full setup -> Membuka LMS dan Locust Web UI (`http://localhost:8089`) di browser.
   * **Cara Menggunakan**: Masukkan parameter pengujian di Web UI lalu klik *Start swarming*.
 
 * **Opsi 4: Skenario C: Perbandingan LB & Biaya**
-  * **Alur Otomatis**: Setup cluster → Enable Ingress → Auto-run 6 kombinasi (3 mode LB × 2 mode HPA) dengan Locust headless (150 users, 3 menit) → Generate laporan HTML:
+  * **Alur Otomatis**: Setup cluster -> Enable Ingress -> Auto-run 6 kombinasi (3 mode LB x 2 mode HPA) dengan Locust headless (150 users, 3 menit) -> Generate laporan HTML:
     * **`result/perbandingan.html`** — Tabel perbandingan + grafik Chart.js (Avg Response, P95, Failure %, RPS)
     * **`result/analisis_biaya.html`** — Analisis biaya 5 tahun: On-Premise vs GCP tanpa HPA vs GCP + HPA
   * **Tujuan**: Membuktikan bahwa Layer 7 LB (Ingress) memberikan performa lebih stabil, dan Autoscaling menghemat biaya cloud secara signifikan.

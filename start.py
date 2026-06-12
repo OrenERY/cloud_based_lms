@@ -114,22 +114,22 @@ def ensure_ingress():
     already = any("ingress" in line and "enabled" in line.lower()
                   for line in result.stdout.split('\n'))
     if already:
-        print("  ✓ Nginx Ingress sudah aktif")
+        print("   Nginx Ingress sudah aktif")
     else:
-        print("  → Mengaktifkan Ingress Controller...")
+        print("  Mengaktifkan Ingress Controller...")
         r = subprocess.run(["minikube", "addons", "enable", "ingress"], timeout=60)
         if r.returncode != 0:
-            print("  ✗ Gagal mengaktifkan Ingress")
+            print("   Gagal mengaktifkan Ingress")
             return False
-        print("  ✓ Ingress Controller aktif")
-    print("  → Menunggu ingress-nginx siap...")
+        print("   Ingress Controller aktif")
+    print("  Menunggu ingress-nginx siap...")
     subprocess.run([
         "kubectl", "wait", "--namespace=ingress-nginx",
         "--for=condition=ready", "pod",
         "--selector=app.kubernetes.io/component=controller",
         "--timeout=120s"
     ], timeout=130, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    print("  ✓ Ingress Controller siap melayani trafik")
+    print("   Ingress Controller siap melayani trafik")
     return True
 
 # ── Helper pod name ──
@@ -144,12 +144,12 @@ def get_first_pod_name():
 # ── Koneksi: direct ke 1 pod (tanpa LB) ──
 def setup_pod_forward():
     """port-forward langsung ke 1 Pod — simulasi tanpa load balancer."""
-    print("\n  [Koneksi] Tanpa LB → port-forward ke 1 Pod...")
+    print("\n  [Koneksi] Tanpa LB: port-forward ke 1 Pod...")
     pod = get_first_pod_name()
     if not pod:
-        print("  ✗ Tidak ada pod tersedia")
+        print("   Tidak ada pod tersedia")
         return None, None
-    print(f"  → Pod: {pod}")
+    print(f"  Pod: {pod}")
     free_port(8081)
     proc = subprocess.Popen(
         ["kubectl", "port-forward", f"pod/{pod}", "8081:80"],
@@ -161,16 +161,16 @@ def setup_pod_forward():
 # ── Koneksi: via Ingress (L7) ──
 def setup_ingress_connection():
     """Koneksi via Minikube IP + Nginx Ingress = Layer 7 LB."""
-    print("\n  [Koneksi] L7 LB → Nginx Ingress...")
+    print("\n  [Koneksi] L7 LB: Nginx Ingress...")
     try:
         r = run_capture(["minikube", "ip"], timeout=10)
         ip = r.stdout.strip()
     except Exception:
-        print("  ✗ Gagal dapat Minikube IP")
+        print("   Gagal dapat Minikube IP")
         return None, None
     if not ip:
         return None, None
-    print(f"  → Minikube IP: {ip}")
+    print(f"  Minikube IP: {ip}")
     print("  Menunggu ingress route stabil (8 dtk)..."); time.sleep(8)
     return None, f"http://{ip}"
 
@@ -190,59 +190,59 @@ def check_prerequisites():
     print("\n  [Python] Memeriksa dependensi Python...")
     # Gunakan find_spec agar tidak import locust (menghindari gevent monkey-patch subprocess)
     if importlib.util.find_spec("locust") is not None:
-        print("  ✓ locust sudah terinstal")
+        print("   locust sudah terinstal")
     else:
-        print("  → locust belum terinstal. Menginstal otomatis...")
+        print("  Locust belum terinstal. Menginstal otomatis...")
         result = subprocess.run(
             [sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "-q"],
             timeout=120
         )
         if result.returncode == 0:
-            print("  ✓ Dependensi Python berhasil diinstal")
+            print("   Dependensi Python berhasil diinstal")
         else:
-            print("  ✗ Gagal menginstal dependensi!")
-            print("    → Coba manual: pip install -r requirements.txt")
+            print("   Gagal menginstal dependensi!")
+            print("    Coba manual: pip install -r requirements.txt")
             all_ok = False
 
     # ── 2. Docker ──
     print("\n  [System Tools] Memeriksa tool sistem...")
     if command_exists("docker"):
-        print("  ✓ docker")
+        print("   docker")
     else:
-        print("  ✗ docker TIDAK DITEMUKAN!")
-        print("    Install: Docker Desktop → https://www.docker.com/products/docker-desktop")
+        print("   docker TIDAK DITEMUKAN!")
+        print("    Install: Docker Desktop (https://www.docker.com/products/docker-desktop)")
         all_ok = False
 
     # ── 3. Minikube (auto-download untuk Windows jika belum ada) ──
     if command_exists("minikube"):
-        print("  ✓ minikube")
+        print("   minikube")
     else:
         if sys.platform.startswith("win"):
-            print("  → minikube belum ada. Mencoba download otomatis...")
+            print("  Minikube belum ada. Mencoba download otomatis...")
             if auto_install_minikube():
-                print("  ✓ minikube berhasil diinstal")
+                print("   minikube berhasil diinstal")
             else:
-                print("  ✗ Gagal menginstal minikube otomatis.")
+                print("   Gagal menginstal minikube otomatis.")
                 print("    Install manual: https://minikube.sigs.k8s.io/docs/start/")
                 all_ok = False
         else:
-            print("  ✗ minikube TIDAK DITEMUKAN!")
+            print("   minikube TIDAK DITEMUKAN!")
             print("    Install: https://minikube.sigs.k8s.io/docs/start/")
             all_ok = False
 
     # ── 4. kubectl ──
     if command_exists("kubectl"):
-        print("  ✓ kubectl")
+        print("   kubectl")
     else:
-        print("  ⚠ kubectl tidak ditemukan (biasanya ikut Docker Desktop/Minikube)")
+        print("  Peringatan: kubectl tidak ditemukan (biasanya ikut Docker Desktop/Minikube)")
         print("    Minikube bisa menggunakan 'minikube kubectl' sebagai pengganti.")
 
     # ── 5. Locust CLI ──
     if command_exists("locust"):
-        print("  ✓ locust CLI")
+        print("   locust CLI")
     else:
         # Mungkin pip install berhasil tapi PATH belum di-refresh
-        print("  ⚠ locust CLI tidak ditemukan di PATH.")
+        print("  Peringatan: locust CLI tidak ditemukan di PATH.")
         print("    Coba tutup dan buka ulang terminal, lalu jalankan ulang script ini.")
         print("    Atau jalankan: pip install locust")
         all_ok = False
@@ -250,7 +250,7 @@ def check_prerequisites():
     if not all_ok:
         print("\n[ERROR] Harap perbaiki masalah di atas, lalu jalankan ulang script ini.")
     else:
-        print("\n  ✅ Semua prasyarat terpenuhi!")
+        print("\n   Semua prasyarat terpenuhi!")
     return all_ok
 
 def auto_install_minikube():
@@ -288,12 +288,12 @@ def ensure_docker():
     print("\n  [Docker] Memeriksa Docker...")
     result = run_capture(["docker", "info"], timeout=10)
     if result.returncode == 0:
-        print("  ✓ Docker Engine berjalan")
+        print("   Docker Engine berjalan")
         return True
     else:
-        print("  ✗ Docker Engine TIDAK berjalan!")
-        print("    → Buka Docker Desktop dan tunggu hingga statusnya 'Running'")
-        print("    → Lalu jalankan ulang script ini")
+        print("   Docker Engine TIDAK berjalan!")
+        print("    Buka Docker Desktop dan tunggu hingga statusnya 'Running'")
+        print("    Lalu jalankan ulang script ini")
         return False
 
 def ensure_minikube():
@@ -302,11 +302,11 @@ def ensure_minikube():
     result = run_capture(["minikube", "status"], timeout=15)
 
     if result.returncode == 0 and "Running" in result.stdout:
-        print("  ✓ Minikube sudah berjalan")
+        print("   Minikube sudah berjalan")
         return True
 
     # Minikube belum jalan — coba start
-    print(f"  → Minikube belum berjalan. Memulai otomatis...")
+    print(f"  Minikube belum berjalan. Memulai otomatis...")
     print(f"    ({MINIKUBE_CPUS} CPU, {MINIKUBE_MEMORY}MB RAM, {MINIKUBE_DISK} disk, {MINIKUBE_RUNTIME})")
     print("    (Ini mungkin memerlukan 1-3 menit pada kali pertama)")
 
@@ -322,12 +322,12 @@ def ensure_minikube():
 
     result = subprocess.run(start_cmd, timeout=600)
     if result.returncode == 0:
-        print("  ✓ Minikube berhasil dimulai!")
+        print("   Minikube berhasil dimulai!")
         return True
     else:
-        print("  ✗ Gagal memulai Minikube!")
-        print("    → Pastikan Docker Desktop sudah berjalan")
-        print("    → Coba manual: minikube start --driver=docker")
+        print("   Gagal memulai Minikube!")
+        print("    Pastikan Docker Desktop sudah berjalan")
+        print("    Coba manual: minikube start --driver=docker")
         return False
 
 def ensure_metrics_server():
@@ -339,21 +339,21 @@ def ensure_metrics_server():
     if "metrics-server" in result.stdout:
         for line in result.stdout.split('\n'):
             if "metrics-server" in line and "enabled" in line.lower():
-                print("  ✓ Metrics Server sudah aktif")
+                print("   Metrics Server sudah aktif")
                 already_enabled = True
                 break
 
     if not already_enabled:
-        print("  → Mengaktifkan Metrics Server...")
+        print("  Mengaktifkan Metrics Server...")
         result = subprocess.run(["minikube", "addons", "enable", "metrics-server"], timeout=60)
         if result.returncode != 0:
-            print("  ✗ Gagal mengaktifkan Metrics Server")
-            print("    → Coba manual: minikube addons enable metrics-server")
+            print("   Gagal mengaktifkan Metrics Server")
+            print("    Coba manual: minikube addons enable metrics-server")
             return False
-        print("  ✓ Metrics Server berhasil diaktifkan")
+        print("   Metrics Server berhasil diaktifkan")
 
     # Patch: metric-resolution=15s agar HPA bereaksi lebih cepat
-    print("  → Memastikan metric-resolution=15s (scrape cepat)...")
+    print("  Memastikan metric-resolution=15s (scrape cepat)...")
     patch_check = run_capture([
         "kubectl", "get", "deployment", "metrics-server", "-n", "kube-system",
         "-o", "jsonpath={.spec.template.spec.containers[0].args}"
@@ -367,27 +367,27 @@ def ensure_metrics_server():
             '-p=[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--metric-resolution=15s"}]'
         ], timeout=15)
         if patch_result.returncode == 0:
-            print("  ✓ Patch metric-resolution berhasil")
+            print("   Patch metric-resolution berhasil")
         else:
-            print("  ⚠ Patch gagal (tidak fatal, HPA tetap berfungsi dengan default 60s)")
+            print("  Peringatan: Patch gagal (tidak fatal, HPA tetap berfungsi dengan default 60s)")
     else:
-        print("  ✓ metric-resolution=15s sudah aktif")
+        print("   metric-resolution=15s sudah aktif")
 
     # Verifikasi: tunggu metrics-server API tersedia
-    print("  → Memverifikasi metrics-server API...")
+    print("  Memverifikasi metrics-server API...")
     for attempt in range(12):   # Maks ~60 detik
         api_check = run_capture([
             "kubectl", "get", "apiservice", "v1beta1.metrics.k8s.io",
             "-o", "jsonpath={.status.conditions[0].status}"
         ], timeout=10)
         if api_check.stdout.strip() == "True":
-            print("  ✓ Metrics Server API tersedia (AVAILABLE: True)")
+            print("   Metrics Server API tersedia (AVAILABLE: True)")
             return True
         sys.stdout.write(f"\r    Menunggu API siap... ({attempt+1}/12)")
         sys.stdout.flush()
         time.sleep(5)
 
-    print("\n  ⚠ Metrics Server API belum tersedia, tetapi mungkin butuh waktu.")
+    print("\n  Peringatan: Metrics Server API belum tersedia, tetapi mungkin butuh waktu.")
     print("    HPA mungkin belum bisa membaca CPU sampai API siap.")
     return True   # Lanjutkan saja, metrics bisa muncul nanti
 
@@ -402,15 +402,15 @@ def preload_images():
         # Format image di minikube: docker.io/library/nginx:alpine
         img_short = img.split("/")[-1]   # nginx:alpine
         if img_short in check.stdout:
-            print(f"  ✓ {img} sudah ada di cache")
+            print(f"   {img} sudah ada di cache")
             continue
 
-        print(f"  → Memuat {img}...")
+        print(f"  Memuat {img}...")
         result = subprocess.run(["minikube", "image", "load", img], timeout=300)
         if result.returncode == 0:
-            print(f"  ✓ {img} berhasil dimuat")
+            print(f"   {img} berhasil dimuat")
         else:
-            print(f"  ⚠ Gagal memuat {img} (pod akan pull otomatis saat dibutuhkan)")
+            print(f"  Peringatan: Gagal memuat {img} (pod akan pull otomatis saat dibutuhkan)")
 
 def verify_node_resources():
     """Tampilkan resource node untuk verifikasi."""
@@ -420,9 +420,9 @@ def verify_node_resources():
         "-o", "jsonpath=  CPU: {.status.capacity.cpu} cores | RAM: {.status.capacity.memory}"
     ], timeout=10)
     if result.returncode == 0 and result.stdout.strip():
-        print(f"  ✓{result.stdout.strip()}")
+        print(f"  {result.stdout.strip()}")
     else:
-        print("  ⚠ Tidak dapat membaca resource node")
+        print("  Peringatan: Tidak dapat membaca resource node")
 
 def setup_cluster():
     """Orkestrasi setup klaster lengkap: Docker → Minikube → Metrics → Images."""
@@ -439,7 +439,7 @@ def setup_cluster():
     preload_images()
     verify_node_resources()
 
-    print("\n  ✅ Klaster Kubernetes siap!")
+    print("\n   Klaster Kubernetes siap!")
     return True
 
 # ══════════════════════════════════════════════════════════════
@@ -459,13 +459,13 @@ def deploy_and_prepare(scenario):
     print("\n  [Deploy] Menyinkronkan file dan menerapkan manifest...")
     result = subprocess.run([sys.executable, "sync.py"], timeout=120)
     if result.returncode != 0:
-        print("  ✗ Gagal deploy manifest! Cek output sync.py di atas.")
+        print("   Gagal deploy manifest! Cek output sync.py di atas.")
         return False
 
     # Konfigurasi skenario
     if scenario == "tanpa_hpa":
         print("\n  [Skenario A] Menyiapkan mode TANPA HPA...")
-        print("  → Menghapus HPA dan mengunci ke 1 Pod statis")
+        print("  Menghapus HPA dan mengunci ke 1 Pod statis")
         run_quiet(["kubectl", "delete", "hpa", "moodle-hpa"])
         subprocess.run(["kubectl", "scale", "deployment", "moodle-deployment", "--replicas=1"])
     else:
@@ -482,13 +482,13 @@ def deploy_and_prepare(scenario):
             timeout=130
         )
     except subprocess.TimeoutExpired:
-        print("  ⚠ Timeout menunggu rollout. Melanjutkan...")
+        print("  Peringatan: Timeout menunggu rollout. Melanjutkan...")
 
     # Tampilkan status pod
     print("\n  [Status Pod]")
     subprocess.run(["kubectl", "get", "pods", "-l", "app=moodle-app", "-o", "wide"], timeout=10)
 
-    print("\n  ✅ Deployment siap!")
+    print("\n   Deployment siap!")
     return True
 
 # ══════════════════════════════════════════════════════════════
@@ -521,13 +521,13 @@ def try_tunnel():
     try:
         run_quiet(["minikube", "tunnel", "--cleanup"], timeout=10)
     except subprocess.TimeoutExpired:
-        print("  ⚠ Cleanup tunnel timeout (diabaikan, melanjutkan...)")
+        print("  Peringatan: Cleanup tunnel timeout (diabaikan, melanjutkan...)")
     time.sleep(1)
 
     # Cek apakah tunnel sudah berjalan di terminal lain
     existing_ip = get_external_ip()
     if existing_ip:
-        print(f"  ✓ Tunnel sudah aktif! External IP: {existing_ip}")
+        print(f"   Tunnel sudah aktif! External IP: {existing_ip}")
         return None, existing_ip   # None process = tidak perlu cleanup
 
     # Coba jalankan tunnel baru di background
@@ -540,7 +540,7 @@ def try_tunnel():
             stdin=subprocess.DEVNULL,   # Jangan menunggu input
         )
     except Exception as e:
-        print(f"  ✗ Tidak bisa menjalankan tunnel: {e}")
+        print(f"   Tidak bisa menjalankan tunnel: {e}")
         return None, None
 
     # Tunggu dan poll untuk External IP
@@ -548,17 +548,17 @@ def try_tunnel():
         time.sleep(1)
         # Cek apakah proses sudah mati (gagal)
         if tunnel_proc.poll() is not None:
-            print("  ✗ Tunnel gagal (mungkin perlu admin privileges)")
+            print("   Tunnel gagal (mungkin perlu admin privileges)")
             return None, None
         # Cek External IP
         ip = get_external_ip()
         if ip:
-            print(f"  ✓ Tunnel aktif! External IP: {ip} (dalam {i+1} detik)")
+            print(f"   Tunnel aktif! External IP: {ip} (dalam {i+1} detik)")
             return tunnel_proc, ip
         sys.stdout.write(f"\r    Menunggu tunnel... ({i+1}/{TUNNEL_TIMEOUT}s)")
         sys.stdout.flush()
 
-    print(f"\n  ✗ Tunnel tidak merespon dalam {TUNNEL_TIMEOUT} detik")
+    print(f"\n   Tunnel tidak merespon dalam {TUNNEL_TIMEOUT} detik")
     tunnel_proc.terminate()
     return None, None
 
@@ -572,17 +572,17 @@ def try_minikube_service():
         )
         url = result.stdout.strip().split('\n')[0].strip()
         if url.startswith("http"):
-            print(f"  ✓ URL didapatkan: {url}")
+            print(f"   URL didapatkan: {url}")
             return url
     except Exception:
         pass
-    print("  ✗ minikube service tidak tersedia")
+    print("   minikube service tidak tersedia")
     return None
 
 def start_port_forward():
     """Start kubectl port-forward sebagai fallback terakhir."""
     print(f"\n  [Koneksi] Menggunakan port-forward (localhost:{PORT_FORWARD_PORT})...")
-    print("  ⚠ Mode ini memiliki kapasitas terbatas (~150 koneksi simultan)")
+    print("  Peringatan: Mode ini memiliki kapasitas terbatas (~150 koneksi simultan)")
 
     free_port(PORT_FORWARD_PORT)
     pf_proc = subprocess.Popen(
@@ -619,7 +619,7 @@ def setup_connection():
         if verify_connection(target_host):
             return target_host, False, tunnel_proc, None
         else:
-            print("  ⚠ Tunnel IP ditemukan tapi koneksi gagal. Mencoba metode lain...")
+            print("  Peringatan: Tunnel IP ditemukan tapi koneksi gagal. Mencoba metode lain...")
             if tunnel_proc:
                 tunnel_proc.terminate()
 
@@ -646,13 +646,13 @@ def verify_connection(url, retries=None):
     print(f"\n  [Verifikasi] Menguji koneksi ke {url} ...")
     for attempt in range(1, retries + 1):
         if health_check(url):
-            print(f"  ✓ Koneksi OK! (percobaan {attempt})")
+            print(f"   Koneksi OK! (percobaan {attempt})")
             return True
-        sys.stdout.write(f"\r  ✗ Percobaan {attempt}/{retries}...")
+        sys.stdout.write(f"\r   Percobaan {attempt}/{retries}...")
         sys.stdout.flush()
         if attempt < retries:
             time.sleep(3)
-    print(f"\n  ✗ Gagal terhubung ke {url} setelah {retries} percobaan")
+    print(f"\n   Gagal terhubung ke {url} setelah {retries} percobaan")
     return False
 
 # ══════════════════════════════════════════════════════════════
@@ -713,9 +713,9 @@ def run_test(scenario, target_host, is_port_forward):
 
     # Peringatan kapasitas
     if is_port_forward and users > 200:
-        print(f"\n  ⚠ PERINGATAN: {users} users mungkin terlalu tinggi untuk port-forward!")
+        print(f"\n  Peringatan: {users} users mungkin terlalu tinggi untuk port-forward!")
         print(f"    Disarankan maks 200. Atau aktifkan tunnel di terminal terpisah:")
-        print(f"    → Buka PowerShell sebagai Admin → jalankan: minikube tunnel")
+        print(f"    Buka PowerShell sebagai Admin, lalu jalankan: minikube tunnel")
         confirm = input("    Tetap lanjutkan? (y/n) [y]: ").strip().lower()
         if confirm == 'n':
             return
@@ -723,7 +723,7 @@ def run_test(scenario, target_host, is_port_forward):
     # Jalankan Locust
     os.makedirs("result", exist_ok=True)
     print(f"\n  {'═' * 48}")
-    print(f"  🚀 Memulai pengujian: Skenario {scenario_label}")
+    print(f"  Memulai pengujian: Skenario {scenario_label}")
     print(f"     Users: {users} | Spawn: {spawn_rate}/s | Durasi: {run_time}")
     print(f"     Target: {target_host}")
     print(f"     Laporan: {html_report}")
@@ -739,10 +739,10 @@ def run_test(scenario, target_host, is_port_forward):
             f"--html={html_report}",
             "--headless"
         ])
-        print(f"\n  ✅ Pengujian Skenario {scenario_label} selesai!")
-        print(f"  📄 Laporan HTML: {os.path.abspath(html_report)}")
+        print(f"\n   Pengujian Skenario {scenario_label} selesai!")
+        print(f"  File laporan: {os.path.abspath(html_report)}")
     except KeyboardInterrupt:
-        print(f"\n  ⚠ Pengujian dibatalkan.")
+        print(f"\n  Peringatan: Pengujian dibatalkan.")
 
 # ══════════════════════════════════════════════════════════════
 #  FASE 6: PERBANDINGAN LOAD BALANCING & BIAYA
@@ -801,7 +801,7 @@ def run_comparison():
         run_time = inp if inp else COMP_TIME
     except Exception:
         run_time = COMP_TIME
-    print(f"  → Beban: {users} users / spawn {spawn_rate}/s / durasi {run_time}\n")
+    print(f"  Beban: {users} users / spawn {spawn_rate}/s / durasi {run_time}\n")
 
     if not setup_cluster():
         return
@@ -833,18 +833,18 @@ def run_comparison():
                 host = f"http://localhost:{PORT_FORWARD_PORT}"
 
             if not host:
-                print(f"  ✗ Gagal koneksi untuk {label}, skip")
+                print(f"   Gagal koneksi untuk {label}, skip")
                 continue
 
             if not verify_connection(host, retries=5):
-                print(f"  ✗ Verifikasi gagal untuk {label}, skip")
+                print(f"   Verifikasi gagal untuk {label}, skip")
                 if proc: proc.terminate(); free_port(8081)
                 continue
 
             # Run test
             html_path = f"result/{mode}_{sc}.html"
             csv_stem = f"result/{mode}_{sc}"
-            print(f"  → Menjalankan load test ({users} users, {run_time})...")
+            print(f"  Menjalankan load test ({users} users, {run_time})...")
             run_locust_headless(host, users, spawn_rate, run_time, html_path, csv_stem)
 
             results.append({"scenario": sc, "mode": mode, "html": html_path, "csv": csv_stem})
@@ -856,7 +856,7 @@ def run_comparison():
     generate_cost_analysis()
 
     print("\n" + "═" * 55)
-    print("  ✅ Selesai! Buka berkas berikut:")
+    print("   Selesai! Buka berkas berikut:")
     print(f"     • result/perbandingan.html")
     print(f"     • result/analisis_biaya.html")
     print("═" * 55)
@@ -1003,7 +1003,7 @@ y2:{{type:'linear',position:'right',title:{{display:true,text:'req/s'}},grid:{{d
     os.makedirs("result", exist_ok=True)
     with open("result/perbandingan.html", "w", encoding="utf-8") as f:
         f.write(html)
-    print("  ✓ result/perbandingan.html — Laporan perbandingan LB")
+    print("   result/perbandingan.html — Laporan perbandingan LB")
 
 def generate_cost_analysis():
     """Buat result/analisis_biaya.html — perbandingan biaya 3 skenario."""
@@ -1092,7 +1092,7 @@ plugins:{tooltip:{callbacks:{label:ctx=>'Rp '+ctx.parsed.y.toLocaleString('id-ID
     os.makedirs("result", exist_ok=True)
     with open("result/analisis_biaya.html", "w", encoding="utf-8") as f:
         f.write(html)
-    print("  ✓ result/analisis_biaya.html — Laporan analisis biaya")
+    print("   result/analisis_biaya.html — Laporan analisis biaya")
 
 # ══════════════════════════════════════════════════════════════
 #  MENU UTAMA
@@ -1102,7 +1102,7 @@ def print_banner():
     print()
     print("╔══════════════════════════════════════════════════════╗")
     print("║   LMS UNSAP – Kubernetes HPA Load Test Runner       ║")
-    print("║   Otomatis: Setup → Deploy → Koneksi → Test         ║")
+    print("║   Otomatis: Setup - Deploy - Koneksi - Test         ║")
     print("╚══════════════════════════════════════════════════════╝")
 
 def print_menu():
@@ -1155,8 +1155,8 @@ def reset_cluster():
         "--type=json",
         '-p=[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--metric-resolution=15s"}]'
     ], timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    print("  ✓ Metrics-Server di-patch ke metric-resolution=15s")
-    print("\n✅ Klaster berhasil direset! Kembali ke menu utama.\n")
+    print("   Metrics-Server di-patch ke metric-resolution=15s")
+    print("\n Klaster berhasil direset! Kembali ke menu utama.\n")
 
 def main():
     print_banner()
@@ -1170,7 +1170,7 @@ def main():
         choice = input("  Masukkan pilihan (1-6): ").strip()
 
         if choice == '6':
-            print("\n  Sampai jumpa! 👋\n")
+            print("\n  Sampai jumpa!\n")
             break
         elif choice == '5':
             reset_cluster()
@@ -1179,7 +1179,7 @@ def main():
             run_comparison()
             continue
         elif choice not in ['1', '2', '3']:
-            print("  ✗ Pilihan tidak valid!")
+            print("   Pilihan tidak valid!")
             continue
 
         # Mapping pilihan → skenario
@@ -1233,5 +1233,5 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\n  Program dihentikan. Sampai jumpa! 👋")
+        print("\n\n  Program dihentikan. Sampai jumpa!")
         sys.exit(0)
