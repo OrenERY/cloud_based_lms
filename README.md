@@ -8,430 +8,206 @@ Repository ini berisi prototipe arsitektur klaster Kubernetes untuk menguji elas
 
 ## Spesifikasi Device Penelitian
 
-| Komponen   | Spesifikasi                         |
-|------------|-------------------------------------|
-| **OS**     | Windows 11, WSL2 aktif              |
-| **CPU**    | Intel Core i5-12450H (12th Gen)     |
-| **RAM**    | 16 GB DDR4                          |
-| **GPU**    | NVIDIA RTX 3050 Laptop              |
-| **Tools**  | Docker Desktop, Minikube, kubectl, Python/Locust |
-| **Shell**  | Semua perintah dijalankan dari **WSL2** |
+| Komponen  | Spesifikasi                                      |
+| --------- | ------------------------------------------------ |
+| **OS**    | Windows 11 (bisa dijalankan langsung via PowerShell/WSL2) |
+| **CPU**   | Intel Core i5-12450H (12th Gen)                  |
+| **RAM**   | 16 GB DDR4                                       |
+| **GPU**   | NVIDIA RTX 3050 Laptop                           |
+| **Tools** | Docker Desktop, Minikube, kubectl, Python/Locust |
 
 ---
 
 ## Komponen & Prasyarat Sistem
 
-1. **Docker Desktop** (WSL 2 backend pada Windows 11).
+1. **Docker Desktop** (dengan WSL 2 backend aktif).
 2. **Minikube** (v1.x) sebagai orchestrator klaster Kubernetes lokal.
 3. **Kubectl** untuk manajemen resource klaster.
-4. **Python 3.x** (ditambah **Locust** untuk menjalankan skenario *load testing*).
+4. **Python 3.x** & **Locust** untuk menjalankan skenario load testing.
 
 ---
 
 ## Struktur Berkas
 
-| File | Deskripsi |
-|------|-----------|
-| `index.html` | Halaman utama Dasbor LMS UNSAP (lokal) |
-| `tugas.html` | Halaman pengumpulan tugas LMS UNSAP (lokal) |
-| `style.css` | Stylesheet utama tampilan LMS (lokal) |
-| `sync.py` | Script Python otomatis untuk menyinkronkan file HTML/CSS lokal ke dalam manifes Kubernetes dan mendeploy ulang ke cluster. Termasuk konfigurasi nginx tuning, CPU stress sidecar, dan HPA |
-| `lms-setup.yaml` | *Auto-generated* — Manifest Kubernetes (hasil generate otomatis dari `sync.py`) yang berisi ConfigMaps, Deployment Nginx + Python sidecar, Service, dan HPA |
-| `locustfile.py` | Script pengujian Locust untuk mensimulasikan trafik 500 mahasiswa concurrent |
-| `requirements.txt` | Dependensi Python (Locust) |
-| `result/` | Folder berisi hasil report HTML dari Locust |
-
+| File                            | Deskripsi                                                                                                                                                                                 |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.html`                    | Halaman utama Dasbor LMS UNSAP (lokal)                                                                                                                                                    |
+| `tugas.html`                    | Halaman pengumpulan tugas LMS UNSAP (lokal)                                                                                                                                               |
+| `style.css`                     | Stylesheet utama tampilan LMS (lokal)                                                                                                                                                     |
+| `sync.py`                       | Script otomatis untuk sinkronisasi file HTML/CSS ke manifes Kubernetes dan deploy ulang ke cluster (nginx tuning, sidecar stress, HPA, Ingress)                                           |
+| `lms-setup.yaml`                | _Auto-generated_ — Manifes Kubernetes (dibuat oleh `sync.py`) berisi ConfigMaps, Deployment Nginx + Python sidecar, Service, Ingress, dan HPA                                              |
+| `locustfile.py`                 | Script pengujian Locust untuk mensimulasikan trafik mahasiswa concurrent                                                                                                                  |
+| `start.py`                      | **Full Streamlined Runner** — Otomatisasi penuh: Docker → Minikube → Metrics Server → Deploy → Koneksi → Load Test + Perbandingan LB & Biaya, semua dalam satu perintah `python start.py` |
+| `requirements.txt`              | Dependensi Python (Locust)                                                                                                                                                                |
+| `result/`                       | Folder laporan hasil pengujian (HTML report)                                                                                                                                              |
+| `result/perbandingan.html`      | _Auto-generated_ — Laporan perbandingan Load Balancing (tabel + grafik Chart.js)                                                                                                           |
+| `result/analisis_biaya.html`    | _Auto-generated_ — Laporan analisis optimasi biaya (On-Premise vs GCP vs GCP+HPA)                                                                                                         |
 
 ---
 
-## Panduan Memulai (Setup & Deployment di WSL2)
+## Panduan Memulai (Setup & Deployment)
 
-> **PENTING**: Jalankan **SEMUA perintah** (kubectl, locust, python) dari dalam **WSL2 terminal**, **BUKAN** dari PowerShell atau CMD Windows.
+Anda dapat menjalankan seluruh proses ini langsung dari **Windows PowerShell** (direkomendasikan) atau dari dalam **WSL2**.
 
-### Langkah 0a: Clone & Install Dependencies
+### Langkah 1: Persiapan Lingkungan & Dependensi (Sekali Saja)
 
-```bash
-git clone https://github.com/<username>/jurnal-LMS.git
-cd jurnal-LMS
-python3 -m venv venv
-source venv/bin/activate
+Buka terminal (PowerShell atau WSL2) di folder proyek:
+
+**Di Windows (PowerShell):**
+```powershell
+# Buat virtual environment
+python -m venv venv
+# Aktifkan virtual environment
+.\venv\Scripts\activate
+# Install dependensi
 pip install -r requirements.txt
 ```
 
-### Langkah 0: Konfigurasi Docker Desktop (Windows)
-
-Buka **Docker Desktop → Settings → Resources** dan atur:
-- **CPUs**: `4` (minimum)
-- **Memory**: `6 GB` (minimum)
-- Pastikan **WSL 2 based engine** sudah dicentang pada **Settings → General**
-
-Klik **Apply & Restart**.
-
-> **Verifikasi**: Pastikan Docker Desktop sudah running (ikon Docker di system tray berwarna hijau/stabil).
-
----
-
-### Langkah 1: Jalankan Klaster Minikube (dari WSL2)
-
-1. Buka terminal WSL2, lalu jalankan Minikube dengan resource terbatas:
-   ```bash
-   minikube start --driver=docker --cpus=3 --memory=4096
-   ```
-   > **Constraint**: Minikube dibatasi maksimal **3 CPU** dan **4 GB RAM** sesuai kapasitas device.
-
-2. Aktifkan **Metrics Server** agar HPA dapat memantau utilitas CPU Pod secara real-time:
-   ```bash
-   minikube addons enable metrics-server
-   ```
-
-3. **Verifikasi Metrics Server** — Pastikan status `AVAILABLE` menunjukkan `True`:
-   ```bash
-   kubectl get apiservice v1beta1.metrics.k8s.io
-   ```
-   Contoh output yang benar:
-   ```
-   NAME                         SERVICE                      AVAILABLE   AGE
-   v1beta1.metrics.k8s.io       kube-system/metrics-server   True        2m
-   ```
-   > Jika masih `False`, tunggu 1-2 menit lalu cek ulang.
-
----
-
-### Langkah 2: Sinkronisasikan & Deploy File ke Kubernetes
-
-Setiap kali Anda mengedit `index.html`, `tugas.html`, atau `style.css`, deploy otomatis ke Kubernetes:
+**Di Linux/WSL2:**
 ```bash
-python3 sync.py
-```
-*Script ini merakit ConfigMap (HTML/CSS/nginx/stress-script), menerapkan manifest `lms-setup.yaml`, dan merestart pod Nginx + sidecar.*
-
-**Verifikasi Deployment** — Pastikan semua pod berjalan dengan **2/2 READY** (nginx + sidecar):
-```bash
-kubectl get pods
-```
-Contoh output yang benar:
-```
-NAME                                  READY   STATUS    RESTARTS   AGE
-moodle-deployment-xxxxxxxxx-xxxxx     2/2     Running   0          30s
-```
-
-> **PENTING**: Kolom READY harus menunjukkan **2/2**, bukan 1/2 or 0/2.  
-> Jika masih belum ready, tunggu dan pantau dengan:
-> ```bash
-> kubectl get pods -w
-> ```
-> Jika pod stuck di `CrashLoopBackOff` atau `Error`, periksa log:
-> ```bash
-> kubectl logs <nama-pod> -c moodle        # Log container nginx
-> kubectl logs <nama-pod> -c stress-sidecar # Log container Python sidecar
-> ```
-
----
-
-### Langkah 3: Port Forward dari WSL2
-
-Jalankan perintah ini di **jendela terminal WSL2 terpisah** (jangan ditutup selama pengujian):
-```bash
-kubectl port-forward svc/moodle-service 8080:80
-```
-
-**Verifikasi Koneksi** — Buka terminal WSL2 **lain** dan jalankan:
-```bash
-curl http://localhost:8080/health
-```
-Harus mengembalikan:
-```
-OK
-```
-
-Uji juga endpoint lainnya:
-```bash
-curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/          # Harus 200
-curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/tugas.html # Harus 200
-curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/courses # Harus 200 (lambat ~2-5 detik karena CPU stress)
-```
-
-> **Jika `curl` gagal dengan `Connection refused`**: Berarti port-forward mati atau pod belum ready. Kembali ke Langkah 2 dan verifikasi ulang.
-
----
-
-## Skenario Pengujian Beban (Load Testing)
-
-### Parameter Pengujian
-
-| Parameter         | Nilai                                               |
-|-------------------|-----------------------------------------------------|
-| **Total Users**   | 500 concurrent users                                |
-| **Spawn Rate**    | 10-20 users/second                                  |
-| **Target Host**   | `http://localhost:8080`                              |
-| **Locust Mode**   | Distributed (1 master + 2 workers)                  |
-| **wait_time**     | `between(0.5, 1.5)` detik                           |
-| **Task Weight**   | `/api/courses` = 8 (CPU stress), dashboard = 3, tugas = 2, health = 1 |
-
-### Menjalankan Locust Distributed (dari WSL2)
-
-Untuk menangani 500 concurrent users secara optimal, jalankan Locust dalam mode **distributed** dengan 1 master dan 2 worker:
-
-**Terminal 1 – Master:**
-```bash
-locust -f locustfile.py --master
-```
-
-**Terminal 2 – Worker 1:**
-```bash
-locust -f locustfile.py --worker --master-host=127.0.0.1
-```
-
-**Terminal 3 – Worker 2:**
-```bash
-locust -f locustfile.py --worker --master-host=127.0.0.1
-```
-
-Buka interface Locust di [http://localhost:8089](http://localhost:8089).
-Masukkan **Number of users**: `500`, **Spawn rate**: `10`, dan **Host**: `http://localhost:8080`. Klik **Start swarming**.
-
-### Alternatif: Locust Headless (CLI Langsung)
-
-Jika tidak ingin menggunakan web UI, jalankan langsung dari terminal:
-```bash
-locust -f locustfile.py --host=http://localhost:8080 \
-  --users=500 --spawn-rate=10 --run-time=2m30s \
-  --html=result/nama_test.html --headless
+# Buat virtual environment
+python3 -m venv venv
+# Aktifkan virtual environment
+source venv/bin/activate
+# Install dependensi
+pip install -r requirements.txt
 ```
 
 ---
 
-## Skenario A: Sistem Eksisting (Tanpa HPA – Statis 1 Pod)
+### Langkah 2: Jalankan Streamlined Runner
 
-Mensimulasikan kegagalan sistem akibat kelebihan beban ketika server dikunci hanya pada 1 Pod statis.
-
-### A1. Persiapan — Matikan HPA
+Cukup jalankan **satu perintah** berikut — script akan **otomatis** menangani semuanya (Docker, Minikube, Metrics Server, Deploy, Koneksi, dan Load Test):
 
 ```bash
-# Hapus aturan HPA
-kubectl delete hpa moodle-hpa
-
-# Kunci replika pada 1 Pod
-kubectl scale deployment moodle-deployment --replicas=1
+python start.py
 ```
 
-### A2. Verifikasi Sebelum Test
+> **INFO**: Script `start.py` akan otomatis:
+> 1. Memverifikasi prasyarat (Docker, Minikube, kubectl, Locust)
+> 2. Memulai Minikube jika belum berjalan (3 CPU, 4GB RAM)
+> 3. Mengaktifkan Metrics Server untuk HPA
+> 4. Deploy manifest terbaru ke klaster
+> 5. Mencari koneksi terbaik (tunnel → minikube service → port-forward)
+> 6. Menjalankan load test sesuai skenario pilihan
+>
+> **Tentang Tunnel**: Script akan otomatis mencoba `minikube tunnel`. Jika tunnel memerlukan hak Administrator dan gagal, script akan fallback ke port-forward dengan **150 users** (sudah cukup untuk memicu HPA dan menghasilkan data jurnal).
+>
+> **Opsional (untuk 500 users)**: Jika ingin throughput penuh, buka PowerShell terpisah sebagai **Administrator** dan jalankan `minikube tunnel` sebelum memulai `start.py`.
 
-> **WAJIB dilakukan sebelum menjalankan Locust!** Jika dilewati, hasil test bisa invalid (100% failure).
+Anda akan disajikan menu interaktif:
+```
+╔══════════════════════════════════════════════════════╗
+║   LMS UNSAP – Kubernetes HPA Load Test Runner       ║
+║   Otomatis: Setup → Deploy → Koneksi → Test         ║
+╚══════════════════════════════════════════════════════╝
 
-```bash
-# 1. Cek pod berjalan (harus READY 2/2, STATUS Running)
-kubectl get pods
-
-# 2. Cek HPA sudah terhapus
-kubectl get hpa
-# Harus menampilkan: No resources found in default namespace.
-
-# 3. Cek replika hanya 1
-kubectl get deployment moodle-deployment
-# READY harus 1/1
-
-# 4. Pastikan port-forward masih aktif (di terminal terpisah)
-kubectl port-forward svc/moodle-service 8080:80
-
-# 5. Test koneksi manual
-curl http://localhost:8080/health
-# Harus return: OK
+┌────────────────────────────────────────────────────┐
+│  Pilih Skenario Pengujian:                         │
+│                                                    │
+│  1. Skenario A: Tanpa HPA                          │
+│     (1 Pod statis, tanpa autoscaling)               │
+│                                                    │
+│  2. Skenario B: Dengan HPA                         │
+│     (Autoscaling 1-10 Pod)                          │
+│                                                    │
+│  3. Uji Interaktif (Locust Web UI)                 │
+│                                                    │
+│  4. Skenario C: Perbandingan LB & Biaya            │
+│     (Auto-run 6 skenario + laporan HTML)            │
+│                                                    │
+│  5. Reset Klaster (Restart Minikube)               │
+│                                                    │
+│  6. Keluar                                         │
+└────────────────────────────────────────────────────┘
 ```
 
-### A3. Jalankan Locust
+#### Deskripsi Pilihan Pengujian:
 
-```bash
-# Via Web UI (distributed)
-# Terminal 1: locust -f locustfile.py --master
-# Terminal 2: locust -f locustfile.py --worker --master-host=127.0.0.1
-# Terminal 3: locust -f locustfile.py --worker --master-host=127.0.0.1
-# Buka http://localhost:8089, isi 500 users, spawn rate 10, host http://localhost:8080
+* **Opsi 1: Skenario A: Tanpa HPA (Headless)**
+  * **Alur Otomatis**: Cek Docker → Start Minikube → Enable Metrics → Deploy manifest → Hapus HPA → Kunci 1 Pod → Setup koneksi → Load test → Simpan `result/tanpa_hpa.html`.
+  * **Tujuan**: Membuktikan server tunggal tradisional akan mengalami kelebihan beban (*high response times* & *failure rates*) saat lonjakan trafik terjadi.
 
-# ATAU via CLI (headless)
-locust -f locustfile.py --host=http://localhost:8080 \
-  --users=500 --spawn-rate=10 --run-time=2m30s \
-  --html=result/tanpa_hpa.html --headless
-```
+* **Opsi 2: Skenario B: Dengan HPA (Headless)**
+  * **Alur Otomatis**: Cek Docker → Start Minikube → Enable Metrics → Deploy manifest + HPA → Autoscaling (1-10 Pods) → Setup koneksi → Load test → Simpan `result/dengan_hpa.html`.
+  * **Tujuan**: Membuktikan keandalan autoscaling dalam membagi beban trafik secara otomatis ke pod-pod baru sehingga *failure rate* ditekan ke tingkat minimal/0%.
 
-### A4. Hasil yang Diharapkan
-- Response time `/api/courses` membengkak (>2000ms, bisa sampai 60-90 detik)
-- Failure rate `/api/courses` meningkat signifikan (502/504 errors)
-- Endpoint statis (`/`, `/tugas.html`, `/health`) tetap responsif (~3-20ms)
-- CPU container mengalami throttling berat
+* **Opsi 3: Uji Interaktif (Locust Web UI)**
+  * **Alur Otomatis**: Full setup → Membuka LMS dan Locust Web UI (`http://localhost:8089`) di browser.
+  * **Cara Menggunakan**: Masukkan parameter pengujian di Web UI lalu klik *Start swarming*.
+
+* **Opsi 4: Skenario C: Perbandingan LB & Biaya**
+  * **Alur Otomatis**: Setup cluster → Enable Ingress → Auto-run 6 kombinasi (3 mode LB × 2 mode HPA) dengan Locust headless (150 users, 3 menit) → Generate laporan HTML:
+    * **`result/perbandingan.html`** — Tabel perbandingan + grafik Chart.js (Avg Response, P95, Failure %, RPS)
+    * **`result/analisis_biaya.html`** — Analisis biaya 5 tahun: On-Premise vs GCP tanpa HPA vs GCP + HPA
+  * **Tujuan**: Membuktikan bahwa Layer 7 LB (Ingress) memberikan performa lebih stabil, dan Autoscaling menghemat biaya cloud secara signifikan.
+  * **3 Mode Load Balancing yang Dibandingkan**:
+    1. **Tanpa LB (Direct Pod)**: `port-forward` langsung ke 1 pod — simulasi server tunggal
+    2. **LB L4 (Service)**: `port-forward` ke Service — kube-proxy round-robin (analogi GCP Network LB)
+    3. **LB L7 (Ingress)**: via Nginx Ingress Controller — routing cerdas (analogi GCP HTTP(S) LB)
+
+* **Opsi 5: Reset Klaster**
+  * Menghentikan, menghapus, dan memulai ulang klaster Minikube dari awal.
 
 ---
 
-## Skenario B: Sistem Usulan (HPA Aktif)
-
-Menguji keandalan mekanisme autoscaling dalam mendistribusikan beban kerja secara otomatis.
-
-### B1. Persiapan — Aktifkan HPA Kembali
-
-```bash
-# Aktifkan kembali HPA & Deploy ulang
-python3 sync.py
-```
-
-### B2. Verifikasi Sebelum Test
-
-> **WAJIB dilakukan sebelum menjalankan Locust!**
-
-```bash
-# 1. Cek pod berjalan (harus READY 2/2, STATUS Running)
-kubectl get pods
-
-# 2. Cek HPA sudah aktif
-kubectl get hpa
-# Harus menampilkan moodle-hpa dengan TARGETS dan MINPODS/MAXPODS
-
-# 3. Pastikan port-forward masih aktif (di terminal terpisah)
-kubectl port-forward svc/moodle-service 8080:80
-
-# 4. Test koneksi manual
-curl http://localhost:8080/health
-# Harus return: OK
-
-# 5. Test endpoint /api/courses (akan lambat ~2-5 detik, itu normal)
-curl http://localhost:8080/api/courses
-# Harus return JSON: {"status": "ok", "hash_rounds": 80000, "courses": [...]}
-```
-
-### B3. Pantau HPA (Terminal Terpisah)
-
-Buka terminal WSL2 tambahan untuk memantau autoscaling secara real-time:
-```bash
-# Pantau perubahan HPA
-kubectl get hpa moodle-hpa -w
-
-# ATAU pantau penambahan pod
-kubectl get pods -l app=moodle-app -w
-```
-
-### B4. Jalankan Locust
-
-```bash
-# Via Web UI (distributed) — sama seperti Skenario A
-# ATAU via CLI (headless)
-locust -f locustfile.py --host=http://localhost:8080 \
-  --users=500 --spawn-rate=10 --run-time=2m30s \
-  --html=result/dengan_hpa.html --headless
-```
-
-### B5. Hasil yang Diharapkan
-- HPA melakukan scale-up (1 → 2 → 3 → hingga 5 Pod) saat CPU > 50%
-- Response time `/api/courses` menurun setelah scale-up
-- Failure rate lebih rendah dibanding Skenario A
-- Endpoint statis tetap responsif
-
-### Konfigurasi HPA
-
-| Parameter            | Nilai |
-|----------------------|-------|
-| **Min Replicas**     | 1     |
-| **Max Replicas**     | 5     |
-| **CPU Threshold**    | 50%   |
-
----
-
-## Arsitektur Pod
+## Arsitektur Pod & Optimasi HPA
 
 Setiap Pod terdiri dari 2 container:
 
-| Container          | Image              | Fungsi                                    | CPU Request | CPU Limit |
-|--------------------|--------------------|-------------------------------------------|-------------|-----------|
-| **moodle** (main)  | `nginx:alpine`     | Serving HTML/CSS + proxy ke stress endpoint | 150m        | 400m      |
-| **stress-sidecar** | `python:3.11-alpine` | CPU stress server (hashing loop 80k rounds) | 50m         | 200m      |
+| Container          | Image                | Fungsi                                       | CPU Request | CPU Limit |
+| ------------------ | -------------------- | -------------------------------------------- | ----------- | --------- |
+| **moodle** (main)  | `nginx:alpine`       | Serving HTML/CSS + proxy ke stress endpoint  | 100m        | 300m      |
+| **stress-sidecar** | `python:3.11-alpine` | CPU stress server (hashing loop 15k rounds)  | 200m        | 400m      |
 
-Endpoint `/api/courses` di nginx mem-proxy request ke sidecar Python (port 5000) yang melakukan **80.000 iterasi SHA-256 hashing** per request, menghasilkan beban CPU nyata untuk memicu HPA.
-
----
-
-## Troubleshooting
-
-### Semua request Locust gagal (100% failure rate)
-
-**Gejala**: Semua endpoint mengembalikan `ConnectionRefusedError` atau `ConnectionError`.
-
-**Penyebab**: Service Kubernetes tidak bisa diakses — port-forward mati atau pod tidak running.
-
-**Solusi**:
-```bash
-# 1. Cek apakah pod masih running
-kubectl get pods
-# Jika tidak ada pod atau STATUS bukan Running, deploy ulang:
-python3 sync.py
-
-# 2. Restart port-forward
-kubectl port-forward svc/moodle-service 8080:80
-
-# 3. Verifikasi koneksi
-curl http://localhost:8080/health
-```
-
-### Pod stuck di CrashLoopBackOff
-
-**Solusi**:
-```bash
-# Cek log error
-kubectl logs <nama-pod> -c stress-sidecar
-kubectl describe pod <nama-pod>
-
-# Biasanya cukup deploy ulang
-python3 sync.py
-```
-
-### HPA tidak melakukan scale-up
-
-**Gejala**: `kubectl get hpa` menunjukkan `<unknown>` pada kolom TARGETS.
-
-**Solusi**:
-```bash
-# Pastikan metrics-server aktif
-minikube addons enable metrics-server
-
-# Tunggu 1-2 menit, lalu cek lagi
-kubectl get hpa
-# TARGETS harus menunjukkan angka (misal: 12%/50%)
-```
-
-### Port-forward terputus setelah test selesai
-
-Port-forward bisa mati jika pod di-restart oleh Kubernetes. Sebelum menjalankan test berikutnya:
-```bash
-# Kill port-forward yang lama (jika ada)
-# Lalu jalankan ulang:
-kubectl port-forward svc/moodle-service 8080:80
-```
-
-### `/api/courses` mengembalikan 502/504 tapi endpoint lain normal
-
-Ini **bukan error konfigurasi** — ini adalah perilaku yang diharapkan pada Skenario A (tanpa HPA). Python sidecar kewalahan memproses 80k hash rounds saat banyak concurrent request.
-
----
-
-## Checklist Cepat Sebelum Setiap Test
-
-Gunakan checklist ini **setiap kali** sebelum menjalankan Locust:
-
-- [ ] Docker Desktop berjalan
-- [ ] Minikube running (`minikube status` → `Running`)
-- [ ] Pod ready 2/2 (`kubectl get pods` → `2/2 Running`)
-- [ ] Port-forward aktif (`kubectl port-forward svc/moodle-service 8080:80`)
-- [ ] Health check berhasil (`curl http://localhost:8080/health` → `OK`)
-- [ ] HPA sesuai skenario (`kubectl get hpa` → ada/tidak ada sesuai kebutuhan)
+### Detail Optimasi HPA (diatur dalam `sync.py`):
+* **Beban CPU 15.000 Hashing Rounds dengan ProcessPoolExecutor**: Dioptimalkan menggunakan process pool agar terhindar dari Python GIL lock, dan disesuaikan ke 15.000 rounds agar throughput melonjak saat HPA melakukan scale-up.
+* **HPA Maksimal 10 Pods**: Kapasitas replikasi dinaikkan hingga maksimal **10 Pod** untuk menampung beban tinggi 500 users.
+* **Parallel Process-Pool Stress Server**: Container sidecar menggunakan `ProcessPoolExecutor` (multi-process) agar request diproses paralel di level proses tanpa terhambat Python GIL.
+* **CPU Target 30%**: Ambang batas CPU diturunkan ke 30% agar HPA bereaksi lebih dini sebelum server mengalami kelebihan beban.
+* **Scale-Up Agresif & Instan**: Mengatur `stabilizationWindowSeconds: 0` dan menaikkan penambahan Pod kebijakan scale-up menjadi **8 Pod sekaligus** agar replikasi cepat terjadi saat CPU melampaui target.
+* **Scale-Down Cepat**: Mengatur `stabilizationWindowSeconds: 30` untuk mempermudah demonstrasi/pengujian lokal.
+* **Readiness Probe Cepat**: Mengatur `initialDelaySeconds: 2` dan `periodSeconds: 2` agar pod baru terdeteksi siap melayani trafik dalam 2 detik.
 
 ---
 
 ## Cara Mengambil Data untuk Laporan Jurnal
 
-1. **Log Transisi Autoscaling (Terminal Output)**:
-   Catat waktu dan perubahan replika saat HPA melakukan scale-up (misal dari `1` ke `3` hingga `5` pod) dari pemantauan `kubectl get hpa -w`.
-2. **Grafik Performa (Locust Charts)**:
-   Unduh grafik **Total Requests per Second (RPS)** dan **Response Times (ms)** langsung dari tab **Charts** di Locust (pilih menu tiga garis di pojok kanan atas grafik → *Download PNG*).
-3. **Data Mentah Statistik (CSV)**:
-   Unduh file statistik di tab **Download Data** di Locust (*Download request statistics CSV* dan *Download test history CSV*) untuk pembuatan grafik kustom di Excel/Word.
-4. **Data via Locust HTML Report**:
-   Jika menggunakan mode headless (`--html=result/nama.html`), buka file HTML hasil test di browser. Semua statistik, grafik, dan tabel sudah tersedia di dalamnya.
-5. **Metrik Ringkasan**:
-   Catat nilai **Average Response Time**, **95th Percentile Response Time**, dan **Failure Rate (%)** untuk dimasukkan ke tabel komparasi hasil pengujian jurnal Anda.
+Untuk analisis jurnal, data performa dan autoscaling dapat dikumpulkan dengan cara berikut:
+
+1. **Log Transisi Autoscaling (Terminal)**:
+   Saat pengujian Skenario B berjalan, buka terminal baru dan pantau aktivitas replika HPA secara real-time:
+   ```bash
+   kubectl get hpa moodle-hpa -w
+   ```
+   Catat waktu dan jumlah replika saat HPA melakukan scale-up (misalnya dari 1 pod menjadi 2 pod, dst.) untuk dimasukkan ke tabel transisi di jurnal.
+
+2. **Data Hasil Load Testing (HTML Report)**:
+   Buka berkas HTML hasil pengujian yang tersimpan di folder `result/` (`tanpa_hpa.html` dan `dengan_hpa.html`) menggunakan web browser. Laporan ini secara otomatis menampilkan:
+   - **Average Response Time** (Waktu respons rata-rata)
+   - **95th Percentile Response Time** (p95 response time)
+   - **Failure Rate (%)** (Persentase request gagal)
+   - **RPS (Requests Per Second)** / Throughput
+   - Grafik performa time-series lengkap.
+
+---
+
+## Troubleshooting
+
+### Port-forwarding gagal atau port 8080 bentrok
+* **Gejala**: `Address already in use` atau program tidak bisa terhubung ke LMS.
+* **Solusi**: Script `start.py` sudah otomatis mendeteksi dan menghentikan proses port-forward lama yang menggantung pada port 8080 sebelum memulai pengujian baru. Jika kendala berlanjut, pastikan tidak ada aplikasi lokal lain (seperti Apache/XAMPP) yang sedang menggunakan port 8080.
+
+### Pod stuck di status `CrashLoopBackOff`
+* **Solusi**: Deploy ulang manifest untuk menyegarkan resource:
+  ```bash
+  python sync.py
+  ```
+  Atau periksa log container sidecar untuk menganalisis error:
+  ```bash
+  kubectl logs -l app=moodle-app -c stress-sidecar --tail=50
+  ```
+
+### TARGETS pada HPA berstatus `<unknown>`
+* **Gejala**: `kubectl get hpa` tidak menampilkan persentase penggunaan CPU.
+* **Solusi**: Pastikan Metrics Server sudah aktif (`minikube addons enable metrics-server`). Metrics Server memerlukan waktu sekitar 1-2 menit setelah klaster menyala untuk mulai mengumpulkan statistik CPU.

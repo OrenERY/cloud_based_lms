@@ -26,8 +26,9 @@ minikube-linux-amd64
 # lms-setup.yaml di-generate otomatis oleh sync.py
 lms-setup.yaml
 
-# ── Locust test results (HTML reports) ─────────────
+# ── Locust test results (HTML reports & CSVs) ──────
 result/*.html
+result/*.csv
 
 # ── OS files ───────────────────────────────────────
 .DS_Store

@@ -105,6 +105,8 @@ data:
         location /api/courses {{
             proxy_pass http://127.0.0.1:5000/api/courses;
             proxy_set_header Host $host;
+            proxy_connect_timeout 5s;
+            proxy_read_timeout    10s;
         }}
     }}
 
@@ -117,31 +119,36 @@ metadata:
 data:
   stress_server.py: |
     #!/usr/bin/env python3
-    import hashlib, json, time
-    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import hashlib, json
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from concurrent.futures import ProcessPoolExecutor
+
+    POOL = ProcessPoolExecutor(max_workers=4)
+
+    def _do_hash():
+        data = "LMS-UNSAP-stress-payload"
+        for _ in range(15000):   # turun dari 60k → 15k
+            data = hashlib.sha256(data.encode()).hexdigest()
+        return data
 
     class StressHandler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/api/courses":
-                # CPU-intensive: hashing loop untuk memicu HPA
-                data = "LMS-UNSAP-stress-payload"
-                for i in range(80000):
-                    data = hashlib.sha256(data.encode()).hexdigest()
+                future = POOL.submit(_do_hash)
+                result = future.result()
                 resp = json.dumps({{
                     "status": "ok",
-                    "hash_rounds": 80000,
+                    "hash_rounds": 15000,
                     "courses": ["Cloud Computing", "PKS-I", "Matematika Diskrit"]
                 }})
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.write = self.wfile.write
                 self.wfile.write(resp.encode())
             else:
                 self.send_response(404)
                 self.end_headers()
-        def log_message(self, format, *args):
-            pass  # suppress logging for performance
+        def log_message(self, *args): pass
 
     if __name__ == "__main__":
         server = HTTPServer(("0.0.0.0", 5000), StressHandler)
@@ -166,6 +173,7 @@ spec:
       labels:
         app: moodle-app
     spec:
+      terminationGracePeriodSeconds: 10
       containers:
         - name: moodle
           image: nginx:alpine
@@ -173,9 +181,9 @@ spec:
             - containerPort: 80
           resources:
             requests:
-              cpu: "150m"   # Dinaikkan dari 100m
+              cpu: "100m"
             limits:
-              cpu: "400m"   # Dinaikkan dari 300m
+              cpu: "300m"
           volumeMounts:
             - name: html-index
               mountPath: /usr/share/nginx/html/index.html
@@ -196,25 +204,26 @@ spec:
             httpGet:
               path: /health
               port: 80
-            initialDelaySeconds: 5
-            periodSeconds: 5
+            initialDelaySeconds: 2
+            periodSeconds: 2
           livenessProbe:
             httpGet:
               path: /health
               port: 80
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            initialDelaySeconds: 5
+            periodSeconds: 5
         # Sidecar: Python CPU stress server
         - name: stress-sidecar
           image: python:3.11-alpine
+          imagePullPolicy: IfNotPresent
           command: ["python3", "/scripts/stress_server.py"]
           ports:
             - containerPort: 5000
           resources:
             requests:
-              cpu: "50m"
-            limits:
               cpu: "200m"
+            limits:
+              cpu: "400m"
           volumeMounts:
             - name: stress-script
               mountPath: /scripts/stress_server.py
@@ -255,6 +264,27 @@ spec:
     app: moodle-app
 
 ---
+# ── 8. Ingress (Nginx L7 Load Balancer) ──────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: moodle-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: moodle-service
+            port:
+              number: 80
+
+---
 # ── 7. HorizontalPodAutoscaler ─────────────────────────────
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -266,14 +296,35 @@ spec:
     kind: Deployment
     name: moodle-deployment
   minReplicas: 1
-  maxReplicas: 5
+  maxReplicas: 10
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 50   # Scale-up jika CPU > 50%
+          averageUtilization: 30   # Scale-up lebih dini jika CPU > 30%
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 8
+        periodSeconds: 15
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 4
+        periodSeconds: 15
+      selectPolicy: Max
 """
 
 try:
