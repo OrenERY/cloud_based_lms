@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """
-═══════════════════════════════════════════════════════════════
-  STREAMLINED RUNNER – LMS UNSAP Kubernetes HPA Load Test
-  Otomatis: Docker → Minikube → Metrics → Deploy → Test
-═══════════════════════════════════════════════════════════════
+STREAMLINED RUNNER - LMS UNSAP Kubernetes HPA Load Test
+Otomatis: Docker > Minikube > Metrics > Deploy > Test
 """
 import os
 import sys
@@ -15,9 +13,9 @@ import urllib.request
 import shutil
 import importlib.util
 
-# ══════════════════════════════════════════════════════════════
+# ============================================================
 #  KONFIGURASI
-# ══════════════════════════════════════════════════════════════
+# ============================================================
 
 MINIKUBE_CPUS     = "6"
 MINIKUBE_MEMORY   = "7000"
@@ -28,7 +26,7 @@ TUNNEL_TIMEOUT    = 15       # Detik menunggu tunnel sebelum fallback
 PREFLIGHT_RETRIES = 10       # Percobaan koneksi sebelum mulai test
 MANIFEST_FILE     = "lms-setup.yaml"
 
-# ── Mode koneksi untuk skenario perbandingan LB ──
+# Mode koneksi untuk skenario perbandingan LB
 MODE_POD_DIRECT = "pod_direct"    # port-forward ke 1 pod = tanpa LB
 MODE_SERVICE_L4 = "service_l4"    # port-forward ke Service = L4 kube-proxy
 MODE_INGRESS_L7 = "ingress_l7"    # via Nginx Ingress = L7 proxy
@@ -38,9 +36,9 @@ COMP_USERS   = 150    # Jumlah pengguna simultan (Default 150 user)
 COMP_SPAWN   = 5      # Laju spawn pengguna/detik (Default 5/s)
 COMP_TIME    = "3m"   # Durasi pengujian (Default 3 menit)
 
-# ══════════════════════════════════════════════════════════════
+# ============================================================
 #  UTILITAS UMUM
-# ══════════════════════════════════════════════════════════════
+# ============================================================
 
 def run_quiet(cmd, **kwargs):
     """Jalankan command tanpa output ke layar."""
@@ -106,7 +104,7 @@ def health_check(url, timeout_sec=5):
     except Exception:
         return False
 
-# ── Ingress Controller (L7 LB) ──
+# Ingress Controller (L7 LB)
 def ensure_ingress():
     """Aktifkan Nginx Ingress Controller addon di Minikube."""
     print("\n  [Ingress L7] Memeriksa Nginx Ingress Controller...")
@@ -132,7 +130,7 @@ def ensure_ingress():
     print("   Ingress Controller siap melayani trafik")
     return True
 
-# ── Helper pod name ──
+# Helper pod name
 def get_first_pod_name():
     """Ambil nama pod pertama yang running."""
     r = run_capture([
@@ -141,7 +139,7 @@ def get_first_pod_name():
     ], timeout=10)
     return r.stdout.strip()
 
-# ── Koneksi: direct ke 1 pod (tanpa LB) ──
+# Koneksi: direct ke 1 pod (tanpa LB)
 def setup_pod_forward():
     """port-forward langsung ke 1 Pod — simulasi tanpa load balancer."""
     print("\n  [Koneksi] Tanpa LB: port-forward ke 1 Pod...")
@@ -158,7 +156,7 @@ def setup_pod_forward():
     print("  Menunggu 5 dtk..."); time.sleep(5)
     return proc, "http://localhost:8081"
 
-# ── Koneksi: via Ingress (L7) ──
+# Koneksi: via Ingress (L7)
 def setup_ingress_connection():
     """Koneksi via Minikube IP + Nginx Ingress = Layer 7 LB."""
     print("\n  [Koneksi] L7 LB: Nginx Ingress...")
@@ -174,19 +172,19 @@ def setup_ingress_connection():
     print("  Menunggu ingress route stabil (8 dtk)..."); time.sleep(8)
     return None, f"http://{ip}"
 
-# ══════════════════════════════════════════════════════════════
+# ============================================================
 #  FASE 1: CEK PRASYARAT
-# ══════════════════════════════════════════════════════════════
+# ============================================================
 
 def check_prerequisites():
     """Verifikasi semua tool yang diperlukan dan install otomatis jika bisa."""
-    print("\n" + "─" * 50)
+    print()
     print("  FASE 1: Memeriksa & Menyiapkan Prasyarat")
-    print("─" * 50)
+    print()
 
     all_ok = True
 
-    # ── 1. Python dependencies (auto-install) ──
+    # 1. Python dependencies (auto-install)
     print("\n  [Python] Memeriksa dependensi Python...")
     # Gunakan find_spec agar tidak import locust (menghindari gevent monkey-patch subprocess)
     if importlib.util.find_spec("locust") is not None:
@@ -204,7 +202,7 @@ def check_prerequisites():
             print("    Coba manual: pip install -r requirements.txt")
             all_ok = False
 
-    # ── 2. Docker ──
+    # 2. Docker
     print("\n  [System Tools] Memeriksa tool sistem...")
     if command_exists("docker"):
         print("   docker")
@@ -213,7 +211,7 @@ def check_prerequisites():
         print("    Install: Docker Desktop (https://www.docker.com/products/docker-desktop)")
         all_ok = False
 
-    # ── 3. Minikube (auto-download untuk Windows jika belum ada) ──
+    # 3. Minikube (auto-download untuk Windows jika belum ada)
     if command_exists("minikube"):
         print("   minikube")
     else:
@@ -230,14 +228,14 @@ def check_prerequisites():
             print("    Install: https://minikube.sigs.k8s.io/docs/start/")
             all_ok = False
 
-    # ── 4. kubectl ──
+    # 4. kubectl
     if command_exists("kubectl"):
         print("   kubectl")
     else:
         print("  Peringatan: kubectl tidak ditemukan (biasanya ikut Docker Desktop/Minikube)")
         print("    Minikube bisa menggunakan 'minikube kubectl' sebagai pengganti.")
 
-    # ── 5. Locust CLI ──
+    # 5. Locust CLI
     if command_exists("locust"):
         print("   locust CLI")
     else:
@@ -279,9 +277,9 @@ def auto_install_minikube():
         print(f"    Error: {e}")
         return False
 
-# ══════════════════════════════════════════════════════════════
-#  FASE 2: SETUP KLASTER (Docker → Minikube → Metrics Server)
-# ══════════════════════════════════════════════════════════════
+# ============================================================
+#  FASE 2: SETUP KLASTER (Docker > Minikube > Metrics Server)
+# ============================================================
 
 def ensure_docker():
     """Pastikan Docker daemon berjalan."""
@@ -425,10 +423,10 @@ def verify_node_resources():
         print("  Peringatan: Tidak dapat membaca resource node")
 
 def setup_cluster():
-    """Orkestrasi setup klaster lengkap: Docker → Minikube → Metrics → Images."""
-    print("\n" + "─" * 50)
+    """Orkestrasi setup klaster lengkap: Docker, Minikube, Metrics, Images."""
+    print()
     print("  FASE 2: Setup Klaster Kubernetes")
-    print("─" * 50)
+    print()
 
     if not ensure_docker():
         return False
@@ -442,18 +440,18 @@ def setup_cluster():
     print("\n   Klaster Kubernetes siap!")
     return True
 
-# ══════════════════════════════════════════════════════════════
+# ============================================================
 #  FASE 3: DEPLOY MANIFEST
-# ══════════════════════════════════════════════════════════════
+# ============================================================
 
 def deploy_and_prepare(scenario):
     """
     Deploy manifest ke klaster dan siapkan skenario.
     scenario: 'tanpa_hpa', 'dengan_hpa', atau 'interaktif'
     """
-    print("\n" + "─" * 50)
+    print()
     print("  FASE 3: Deploy & Persiapan Skenario")
-    print("─" * 50)
+    print()
 
     # Sync file lokal ke manifest dan deploy
     print("\n  [Deploy] Menyinkronkan file dan menerapkan manifest...")
@@ -491,9 +489,9 @@ def deploy_and_prepare(scenario):
     print("\n   Deployment siap!")
     return True
 
-# ══════════════════════════════════════════════════════════════
-#  FASE 4: SETUP KONEKSI (Tunnel → minikube service → Port-Forward)
-# ══════════════════════════════════════════════════════════════
+# ============================================================
+#  FASE 4: SETUP KONEKSI (Tunnel > minikube service > Port-Forward)
+# ============================================================
 
 def get_external_ip():
     """Cek apakah Service sudah punya External IP (dari minikube tunnel)."""
@@ -604,14 +602,14 @@ def setup_connection():
 
     Returns: (target_host, is_port_forward, tunnel_proc, pf_proc)
     """
-    print("\n" + "─" * 50)
+    print()
     print("  FASE 4: Menyiapkan Koneksi ke Layanan")
-    print("─" * 50)
+    print()
 
     tunnel_proc = None
     pf_proc = None
 
-    # ── Metode 1: Tunnel ──
+    # Metode 1: Tunnel
     tunnel_proc, tunnel_ip = try_tunnel()
     if tunnel_ip:
         target_host = f"http://{tunnel_ip}"
@@ -623,13 +621,13 @@ def setup_connection():
             if tunnel_proc:
                 tunnel_proc.terminate()
 
-    # ── Metode 2: minikube service ──
+    # Metode 2: minikube service
     svc_url = try_minikube_service()
     if svc_url:
         if verify_connection(svc_url):
             return svc_url, False, None, None
 
-    # ── Metode 3: Port-Forward ──
+    # Metode 3: Port-Forward
     pf_proc = start_port_forward()
     target_host = f"http://localhost:{PORT_FORWARD_PORT}"
     if verify_connection(target_host):
@@ -655,15 +653,15 @@ def verify_connection(url, retries=None):
     print(f"\n   Gagal terhubung ke {url} setelah {retries} percobaan")
     return False
 
-# ══════════════════════════════════════════════════════════════
+# ============================================================
 #  FASE 5: JALANKAN LOAD TEST
-# ══════════════════════════════════════════════════════════════
+# ============================================================
 
 def run_test(scenario, target_host, is_port_forward):
     """Jalankan Locust load test."""
-    print("\n" + "─" * 50)
+    print()
     print("  FASE 5: Menjalankan Pengujian Beban")
-    print("─" * 50)
+    print()
 
     if scenario == "interaktif":
         print(f"\n  Membuka Locust Web UI dan halaman LMS...")
@@ -677,7 +675,7 @@ def run_test(scenario, target_host, is_port_forward):
             print("\n  Locust dihentikan.")
         return
 
-    # ── Mode Headless ──
+    # Mode Headless
     scenario_label = "TANPA HPA" if scenario == "tanpa_hpa" else "DENGAN HPA"
     html_report = f"result/{scenario}.html"
 
@@ -722,12 +720,10 @@ def run_test(scenario, target_host, is_port_forward):
 
     # Jalankan Locust
     os.makedirs("result", exist_ok=True)
-    print(f"\n  {'═' * 48}")
-    print(f"  Memulai pengujian: Skenario {scenario_label}")
+    print(f"\n  Memulai pengujian: Skenario {scenario_label}")
     print(f"     Users: {users} | Spawn: {spawn_rate}/s | Durasi: {run_time}")
     print(f"     Target: {target_host}")
-    print(f"     Laporan: {html_report}")
-    print(f"  {'═' * 48}\n")
+    print(f"     Laporan: {html_report}\n")
 
     try:
         subprocess.run([
@@ -744,9 +740,9 @@ def run_test(scenario, target_host, is_port_forward):
     except KeyboardInterrupt:
         print(f"\n  Peringatan: Pengujian dibatalkan.")
 
-# ══════════════════════════════════════════════════════════════
+# ============================================================
 #  FASE 6: PERBANDINGAN LOAD BALANCING & BIAYA
-# ══════════════════════════════════════════════════════════════
+# ============================================================
 
 def deploy_for_scenario(scenario):
     """Deploy dengan konfigurasi skenario tanpa interaksi."""
@@ -780,12 +776,12 @@ def run_locust_headless(host, users, spawn, run_time, html_path, csv_stem=None):
 
 def run_comparison():
     """Auto-run 6 kombinasi skenario: 2 HPA × 3 LB mode."""
-    print("\n" + "═" * 55)
+    print()
     print("  SKENARIO C: Perbandingan Load Balancing & Biaya")
-    print("═" * 55)
+    print()
 
     # Input konfigurasi beban untuk seluruh skenario
-    print(f"\n  --- Konfigurasi Beban (Skenario Perbandingan) ---")
+    print(f"\n  Konfigurasi Beban (Skenario Perbandingan)")
     try:
         inp = input(f"  Jumlah concurrent users (Default {COMP_USERS} user): ").strip()
         users = int(inp) if inp else COMP_USERS
@@ -820,7 +816,7 @@ def run_comparison():
         deploy_for_scenario(sc)
         for mode in modes:
             label = f"{mode} / {sc}"
-            print(f"\n  ── [{label}] ──")
+            print(f"\n  -- [{label}] --")
 
             # Setup koneksi sesuai mode
             if mode == MODE_POD_DIRECT:
@@ -855,11 +851,11 @@ def run_comparison():
     generate_comparison_report(results, users, run_time)
     generate_cost_analysis()
 
-    print("\n" + "═" * 55)
+    print()
     print("   Selesai! Buka berkas berikut:")
-    print(f"     • result/perbandingan.html")
-    print(f"     • result/analisis_biaya.html")
-    print("═" * 55)
+    print(f"     - result/perbandingan.html")
+    print(f"     - result/analisis_biaya.html")
+    print()
 
 def parse_locust_csv(csv_stem):
     """Parse Locust stats CSV dan ambil metrics agregat."""
@@ -872,7 +868,7 @@ def parse_locust_csv(csv_stem):
         with open(path, newline='', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
-                if row.get("Type") == "Aggregated":
+                if row.get("Name") == "Aggregated":
                     agg["avg_ms"] = round(float(row.get("Average Response Time", 0)), 1)
                     agg["p95_ms"] = round(float(row.get("95%", 0)), 1)
                     agg["fail_pct"] = round(float(row.get("Failure %", 0)), 2)
@@ -1094,37 +1090,35 @@ plugins:{tooltip:{callbacks:{label:ctx=>'Rp '+ctx.parsed.y.toLocaleString('id-ID
         f.write(html)
     print("   result/analisis_biaya.html — Laporan analisis biaya")
 
-# ══════════════════════════════════════════════════════════════
+# ============================================================
 #  MENU UTAMA
-# ══════════════════════════════════════════════════════════════
+# ============================================================
 
 def print_banner():
     print()
-    print("╔══════════════════════════════════════════════════════╗")
-    print("║   LMS UNSAP – Kubernetes HPA Load Test Runner       ║")
-    print("║   Otomatis: Setup - Deploy - Koneksi - Test         ║")
-    print("╚══════════════════════════════════════════════════════╝")
+    print("LMS UNSAP - Load Test Runner")
+    print("Setup > Deploy > Koneksi > Test")
+    print()
 
 def print_menu():
     print()
-    print("┌────────────────────────────────────────────────────┐")
-    print("│  Pilih Skenario Pengujian:                         │")
-    print("│                                                    │")
-    print("│  1. Skenario A: Tanpa HPA                          │")
-    print("│     (1 Pod statis, tanpa autoscaling)               │")
-    print("│                                                    │")
-    print("│  2. Skenario B: Dengan HPA                         │")
-    print("│     (Autoscaling 1-10 Pod)                          │")
-    print("│                                                    │")
-    print("│  3. Uji Interaktif (Locust Web UI)                 │")
-    print("│                                                    │")
-    print("│  4. Skenario C: Perbandingan LB & Biaya            │")
-    print("│     (Auto-run 6 skenario + laporan HTML)            │")
-    print("│                                                    │")
-    print("│  5. Reset Klaster (Restart Minikube)               │")
-    print("│                                                    │")
-    print("│  6. Keluar                                         │")
-    print("└────────────────────────────────────────────────────┘")
+    print("Pilih skenario:")
+    print()
+    print("  1. Skenario A: Tanpa HPA")
+    print("     (1 pod statis, auto scaling mati)")
+    print()
+    print("  2. Skenario B: Dengan HPA")
+    print("     (auto scaling 1-10 pod)")
+    print()
+    print("  3. Uji Interaktif (Locust Web UI)")
+    print()
+    print("  4. Skenario C: Perbandingan LB & Biaya")
+    print("     (auto run 6 skenario + laporan HTML)")
+    print()
+    print("  5. Reset Klaster (restart Minikube)")
+    print()
+    print("  6. Keluar")
+    print()
 
 def reset_cluster():
     """Reset seluruh klaster Minikube."""
@@ -1190,7 +1184,7 @@ def main():
         }
         scenario = scenario_map[choice]
 
-        # ══ PIPELINE OTOMATIS ══
+        # PIPELINE OTOMATIS
         # Fase 2: Setup klaster
         if not setup_cluster():
             print("\n[ABORTED] Gagal menyiapkan klaster. Perbaiki masalah di atas.\n")

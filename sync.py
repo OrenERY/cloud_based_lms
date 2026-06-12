@@ -4,7 +4,7 @@ import subprocess
 def indent(text, spaces=4):
     return '\n'.join(' ' * spaces + line if line.strip() else line for line in text.splitlines())
 
-print("[INFO] Membaca file lokal...")
+print("Membaca file lokal...")
 try:
     with open('index.html', 'r', encoding='utf-8') as f:
         index_content = f.read()
@@ -13,17 +13,12 @@ try:
     with open('style.css', 'r', encoding='utf-8') as f:
         style_content = f.read()
 except Exception as e:
-    print(f"[ERROR] Gagal membaca file lokal: {e}")
+    print(f"Error: gagal membaca file lokal: {e}")
     sys.exit(1)
 
-yaml_template = f"""# =========================================================
-#  LMS UNSAP – Prototipe Simulasi Kubernetes HPA
-#  File: lms-setup.yaml
-#  Deskripsi: Deploy nginx ringan yang menyajikan tiruan
-#             LMS UNSAP via ConfigMap. HPA memantau CPU.
-# =========================================================
+yaml_template = f"""# LMS UNSAP - lms-setup.yaml (auto-generated)
 
-# ── 1. ConfigMap: index.html (Dashboard) ─────────────────
+# 1. ConfigMap: index.html (Dashboard)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -33,7 +28,7 @@ data:
 {indent(index_content, 4)}
 
 ---
-# ── 2. ConfigMap: tugas.html (Halaman Pengumpulan Tugas) ──
+# 2. ConfigMap: tugas.html (Halaman Pengumpulan Tugas)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -43,7 +38,7 @@ data:
 {indent(tugas_content, 4)}
 
 ---
-# ── 3. ConfigMap: style.css (Stylesheet) ───────────────────
+# 3. ConfigMap: style.css (Stylesheet)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -53,7 +48,7 @@ data:
 {indent(style_content, 4)}
 
 ---
-# ── 4. ConfigMap: nginx.conf (main config tuning) ─────────
+# 4. ConfigMap: nginx.conf (main config tuning)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -74,7 +69,7 @@ data:
     }}
 
 ---
-# ── 4b. ConfigMap: nginx default.conf (multi-page routing) ─
+# 4b. ConfigMap: nginx default.conf (multi-page routing)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -111,7 +106,7 @@ data:
     }}
 
 ---
-# ── 4c. ConfigMap: CPU Stress Script (Python sidecar) ──────
+# 4c. ConfigMap: CPU Stress Script (Python sidecar)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -156,7 +151,7 @@ data:
         server.serve_forever()
 
 ---
-# ── 5. Deployment ──────────────────────────────────────────
+# 5. Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -249,7 +244,7 @@ spec:
             name: lms-stress-script
 
 ---
-# ── 6. Service ─────────────────────────────────────────────
+# 6. Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -264,7 +259,7 @@ spec:
     app: moodle-app
 
 ---
-# ── 8. Ingress (Nginx L7 Load Balancer) ──────────────────────
+# 7. Ingress (Nginx L7 Load Balancer)
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -285,7 +280,7 @@ spec:
               number: 80
 
 ---
-# ── 7. HorizontalPodAutoscaler ─────────────────────────────
+# 8. HorizontalPodAutoscaler
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -330,17 +325,17 @@ spec:
 try:
     with open('lms-setup.yaml', 'w', encoding='utf-8') as f:
         f.write(yaml_template)
-    print("[INFO] lms-setup.yaml berhasil diperbarui.")
+    print("lms-setup.yaml berhasil diperbarui.")
 except Exception as e:
-    print(f"[ERROR] Gagal memperbarui lms-setup.yaml: {e}")
+    print(f"Error: gagal memperbarui lms-setup.yaml: {e}")
     sys.exit(1)
 
 try:
-    print("[INFO] Menerapkan manifest terbaru ke Kubernetes...")
+    print("Menerapkan manifest ke Kubernetes...")
     subprocess.run(["kubectl", "apply", "-f", "lms-setup.yaml"], check=True)
-    print("[INFO] Merestart pod deployment...")
+    print("Merestart pod deployment...")
     subprocess.run(["kubectl", "rollout", "restart", "deployment", "moodle-deployment"], check=True)
-    print("[SUCCESS] Sinkronisasi & Deployment sukses!")
+    print("Sinkronisasi & deployment sukses!")
 except Exception as e:
-    print(f"[ERROR] Gagal menjalankan perintah Kubernetes: {e}")
+    print(f"Error: gagal menjalankan perintah Kubernetes: {e}")
     sys.exit(1)

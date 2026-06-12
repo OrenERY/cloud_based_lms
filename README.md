@@ -85,7 +85,7 @@ python start.py
 
 > **INFO**: Script `start.py` akan otomatis:
 > 1. Memverifikasi prasyarat (Docker, Minikube, kubectl, Locust)
-> 2. Memulai Minikube jika belum berjalan (3 CPU, 4GB RAM)
+> 2. Memulai Minikube jika belum berjalan (6 CPU, 7GB RAM)
 > 3. Mengaktifkan Metrics Server untuk HPA
 > 4. Deploy manifest terbaru ke klaster
 > 5. Mencari koneksi terbaik (tunnel -> minikube service -> port-forward)
@@ -97,29 +97,22 @@ python start.py
 
 Anda akan disajikan menu interaktif:
 ```
-╔══════════════════════════════════════════════════════╗
-║   LMS UNSAP – Kubernetes HPA Load Test Runner       ║
-║   Otomatis: Setup - Deploy - Koneksi - Test         ║
-╚══════════════════════════════════════════════════════╝
+Pilih skenario:
 
-┌────────────────────────────────────────────────────┐
-│  Pilih Skenario Pengujian:                         │
-│                                                    │
-│  1. Skenario A: Tanpa HPA                          │
-│     (1 Pod statis, tanpa autoscaling)               │
-│                                                    │
-│  2. Skenario B: Dengan HPA                         │
-│     (Autoscaling 1-10 Pod)                          │
-│                                                    │
-│  3. Uji Interaktif (Locust Web UI)                 │
-│                                                    │
-│  4. Skenario C: Perbandingan LB & Biaya            │
-│     (Auto-run 6 skenario + laporan HTML)            │
-│                                                    │
-│  5. Reset Klaster (Restart Minikube)               │
-│                                                    │
-│  6. Keluar                                         │
-└────────────────────────────────────────────────────┘
+  1. Skenario A: Tanpa HPA
+     (1 pod statis, auto scaling mati)
+
+  2. Skenario B: Dengan HPA
+     (auto scaling 1-10 pod)
+
+  3. Uji Interaktif (Locust Web UI)
+
+  4. Skenario C: Perbandingan LB & Biaya
+     (auto run 6 skenario + laporan HTML)
+
+  5. Reset Klaster (restart Minikube)
+
+  6. Keluar
 ```
 
 #### Deskripsi Pilihan Pengujian:
