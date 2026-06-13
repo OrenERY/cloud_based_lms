@@ -28,7 +28,7 @@ lms-setup.yaml
 
 # ── Locust test results (HTML reports & CSVs) ──────
 result/*.html
-result/*.csv
+result/csv/
 
 # ── OS files ───────────────────────────────────────
 .DS_Store

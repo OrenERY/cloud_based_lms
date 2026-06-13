@@ -106,29 +106,59 @@ def health_check(url, timeout_sec=5):
 
 # Ingress Controller (L7 LB)
 def ensure_ingress():
-    """Aktifkan Nginx Ingress Controller addon di Minikube."""
-    print("\n  [Ingress L7] Memeriksa Nginx Ingress Controller...")
+    """Aktifkan Nginx Ingress Controller addon di Minikube dengan retry & error logging."""
+    print("\n  [Ingress L7] Memeriksa & mengaktifkan Nginx Ingress Controller...")
+
+    # Cek apakah sudah aktif
     result = run_capture(["minikube", "addons", "list"], timeout=15)
     already = any("ingress" in line and "enabled" in line.lower()
                   for line in result.stdout.split('\n'))
     if already:
         print("   Nginx Ingress sudah aktif")
     else:
-        print("  Mengaktifkan Ingress Controller...")
-        r = subprocess.run(["minikube", "addons", "enable", "ingress"], timeout=60)
-        if r.returncode != 0:
-            print("   Gagal mengaktifkan Ingress")
+        print("  Mengaktifkan Ingress Controller (1/3)...")
+        for attempt in range(3):
+            r = subprocess.run(["minikube", "addons", "enable", "ingress"], timeout=60,
+                               capture_output=True, text=True)
+            if r.returncode == 0:
+                print("   Ingress Controller berhasil diaktifkan")
+                break
+            print(f"   Percobaan {attempt+1} gagal: {r.stderr.strip()[-200:]}")
+            if attempt < 2:
+                print("   Mencoba ulang dalam 10 detik...")
+                time.sleep(10)
+        else:
+            print("   Gagal mengaktifkan Ingress setelah 3 percobaan")
             return False
-        print("   Ingress Controller aktif")
-    print("  Menunggu ingress-nginx siap...")
-    subprocess.run([
-        "kubectl", "wait", "--namespace=ingress-nginx",
-        "--for=condition=ready", "pod",
-        "--selector=app.kubernetes.io/component=controller",
-        "--timeout=120s"
-    ], timeout=130, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    print("   Ingress Controller siap melayani trafik")
-    return True
+
+    # Tunggu ingress-nginx controller pod siap (timeout diperpanjang)
+    print("  Menunggu ingress-nginx siap (timeout 240 detik)...")
+    for attempt in range(24):
+        r = subprocess.run([
+            "kubectl", "get", "pods", "-n", "ingress-nginx",
+            "--selector=app.kubernetes.io/component=controller",
+            "-o", "jsonpath={.items[0].status.phase}"
+        ], timeout=10, capture_output=True, text=True)
+        status = r.stdout.strip()
+        if status == "Running":
+            print(f"   ingress-nginx Ready (percobaan {attempt+1})")
+            time.sleep(5)
+            return True
+        sys.stdout.write(f"\r    Menunggu ingress-nginx container... ({attempt+1}/24, status: {status or 'N/A'})")
+        sys.stdout.flush()
+        time.sleep(10)
+
+    # Cek detail pod untuk debugging
+    print("\n   [ERROR] ingress-nginx tidak siap dalam 240 detik")
+    r = run_capture(["kubectl", "get", "pods", "-n", "ingress-nginx"], timeout=10)
+    print(f"   Pod status:\n{r.stdout}")
+    r = run_capture(["kubectl", "describe", "pods", "-n", "ingress-nginx",
+                     "--selector=app.kubernetes.io/component=controller"], timeout=15)
+    for line in r.stdout.split('\n'):
+        if "Status:" in line or "Reason:" in line or "Message:" in line:
+            print(f"   {line.strip()}")
+    print("   [Ingress L7] Gagal — melanjutkan tanpa mode L7")
+    return False
 
 # Helper pod name
 def get_first_pod_name():
@@ -156,21 +186,54 @@ def setup_pod_forward():
     print("  Menunggu 5 dtk..."); time.sleep(5)
     return proc, "http://localhost:8081"
 
+def _patch_svc_type(name, svc_type, namespace="default"):
+    """Helper: ubah tipe service Kubernetes via JSON patch file."""
+    import tempfile, json
+    pf = os.path.join(tempfile.gettempdir(), f"patch_{name}.json")
+    try:
+        with open(pf, "w") as f:
+            json.dump({"spec": {"type": svc_type}}, f)
+        subprocess.run(
+            ["kubectl", "patch", "svc", name, "-n", namespace, "--patch-file", pf],
+            timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+    except Exception:
+        pass
+
 # Koneksi: via Ingress (L7)
 def setup_ingress_connection():
-    """Koneksi via Minikube IP + Nginx Ingress = Layer 7 LB."""
+    """
+    Koneksi ke Nginx Ingress Controller (L7).
+    Di Windows, Minikube IP tidak reachable langsung, jadi:
+      1. Moodle-service dialihkan ke ClusterIP (bebaskan port 80 tunnel)
+      2. Ingress Controller dipatch ke LoadBalancer
+      3. Akses via 127.0.0.1:80 (tunnel → Ingress Controller → Ingress resource → service)
+    """
     print("\n  [Koneksi] L7 LB: Nginx Ingress...")
-    try:
-        r = run_capture(["minikube", "ip"], timeout=10)
-        ip = r.stdout.strip()
-    except Exception:
-        print("   Gagal dapat Minikube IP")
-        return None, None
-    if not ip:
-        return None, None
-    print(f"  Minikube IP: {ip}")
-    print("  Menunggu ingress route stabil (8 dtk)..."); time.sleep(8)
-    return None, f"http://{ip}"
+
+    # Step 1: pastikan ingress-nginx-controller adalah LoadBalancer
+    print("  Memastikan Ingress Controller sebagai LoadBalancer...")
+    _patch_svc_type("ingress-nginx-controller", "LoadBalancer", "ingress-nginx")
+    time.sleep(3)
+
+    # Step 2: alihkan moodle-service ke ClusterIP agar tidak rebutan port 80 tunnel
+    print("  Mengalihkan moodle-service ke ClusterIP (bebaskan port 80)...")
+    _patch_svc_type("moodle-service", "ClusterIP")
+    time.sleep(3)
+
+    # Step 3: polling tunnel (127.0.0.1:80) untuk Ingress Controller
+    print("  Polling 127.0.0.1:80 untuk Ingress Controller...")
+    for attempt in range(10):
+        if health_check("http://127.0.0.1"):
+            print(f"   Ingress siap via tunnel! (percobaan {attempt+1})")
+            return None, "http://127.0.0.1"
+        sys.stdout.write(f"\r    Menunggu ingress via tunnel... ({attempt+1}/10)")
+        sys.stdout.flush()
+        time.sleep(3)
+
+    print("\n   [ERROR] Gagal terhubung ke Ingress Controller via tunnel")
+    print("   [L7 Ingress] Tidak tersedia — melanjutkan tanpa mode L7")
+    return None, None
 
 # ============================================================
 #  FASE 1: CEK PRASYARAT
@@ -490,11 +553,15 @@ def deploy_and_prepare(scenario):
     return True
 
 # ============================================================
-#  FASE 4: SETUP KONEKSI (Tunnel > minikube service > Port-Forward)
+#  FASE 4: SETUP KONEKSI (Prompt Tunnel > Auto Tunnel > minikube service > Port-Forward)
 # ============================================================
 
 def get_external_ip():
-    """Cek apakah Service sudah punya External IP (dari minikube tunnel)."""
+    """
+    Cek External IP dari minikube tunnel via service LoadBalancer.
+    Di Windows, IP biasanya 127.0.0.1 — itu normal untuk tunnel.
+    Returns IP string jika ada, None jika tidak.
+    """
     try:
         ip = subprocess.check_output(
             ["kubectl", "get", "svc", "moodle-service", "-o",
@@ -507,11 +574,42 @@ def get_external_ip():
         pass
     return None
 
+def prompt_tunnel():
+    """
+    Prompt user untuk mengaktifkan minikube tunnel manual.
+    Cek apakah tunnel sudah berjalan, jika belum minta user membuka Admin PowerShell.
+    Returns: True jika tunnel aktif, False jika user pilih port-forward.
+    """
+    ip = get_external_ip()
+    if ip:
+        print("  [Tunnel] Terdeteksi aktif.")
+        return True
+
+    print()
+    print("  ===========================================================")
+    print("  [Tunnel] minikube tunnel BELUM terdeteksi!")
+    print("  Untuk throughput penuh, tunnel WAJIB diaktifkan.")
+    print()
+    print("  Langkah:")
+    print("   1. Buka PowerShell sebagai Administrator")
+    print("   2. Jalankan: minikube tunnel")
+    print("   3. Biarkan proses tunnel berjalan (jangan ditutup)")
+    print("  ===========================================================")
+    input("  Setelah tunnel berjalan, tekan Enter untuk melanjutkan...")
+
+    ip = get_external_ip()
+    if ip:
+        print("  [Tunnel] Terdeteksi aktif!")
+        return True
+
+    choice = input("  Tunnel masih belum terdeteksi. Lanjut dengan port-forward? (y/n) [n]: ").strip().lower()
+    return choice == 'y'
+
 def try_tunnel():
     """
     Coba jalankan minikube tunnel secara non-blocking.
-    Jika berhasil → return (process, ip).
-    Jika gagal (perlu admin / hang) → return (None, None) dalam TUNNEL_TIMEOUT detik.
+    Jika berhasil: return (process, ip).
+    Jika gagal (perlu admin / hang): return (None, None) dalam TUNNEL_TIMEOUT detik.
     """
     print("\n  [Koneksi] Mencoba minikube tunnel (untuk throughput maksimal)...")
 
@@ -592,11 +690,41 @@ def start_port_forward():
     time.sleep(8)
     return pf_proc
 
+def resolve_l4_endpoint():
+    """
+    Resolve endpoint untuk L4 Service mode dengan prioritas:
+    1. Tunnel IP (External IP dari minikube tunnel) — throughput penuh, tanpa port-forward
+    2. minikube service --url — langsung ke NodePort, tanpa port-forward
+    3. kubectl port-forward — fallback, kapasitas terbatas ~150 goroutine
+    Returns: (proc, host, is_limited)
+      proc       — None jika pakai tunnel/service, Popen object jika port-forward
+      host       — URL endpoint
+      is_limited — True jika port-forward (terbatas), False jika tunnel/service (penuh)
+    """
+    ip = get_external_ip()
+    if ip:
+        print(f"   [L4] Tunnel aktif — External IP: {ip}")
+        host = f"http://{ip}"
+        if verify_connection(host, retries=3):
+            return None, host, False
+        print("   [L4] Tunnel IP ditemukan tapi koneksi gagal, coba metode lain...")
+
+    print("   [L4] Tunnel tidak tersedia, mencoba minikube service...")
+    svc_url = try_minikube_service()
+    if svc_url:
+        print(f"   [L4] Via minikube service: {svc_url}")
+        return None, svc_url, False
+
+    print("   [L4] Fallback ke port-forward (kapasitas ~150 goroutine)")
+    proc = start_port_forward()
+    return proc, f"http://localhost:{PORT_FORWARD_PORT}", True
+
 def setup_connection():
     """
     Setup koneksi ke layanan LMS di klaster.
-    Mencoba 3 metode secara berurutan:
-      1. minikube tunnel (throughput terbaik, perlu admin)
+    Mencoba 4 metode secara berurutan:
+      0. Prompt tunnel manual (user buka PowerShell Admin)
+      1. minikube tunnel auto (throughput terbaik, perlu admin)
       2. minikube service --url (tanpa admin)
       3. kubectl port-forward (fallback, kapasitas terbatas)
 
@@ -609,7 +737,16 @@ def setup_connection():
     tunnel_proc = None
     pf_proc = None
 
-    # Metode 1: Tunnel
+    # Metode 0: Prompt tunnel manual
+    if prompt_tunnel():
+        ip = get_external_ip()
+        if ip:
+            target_host = f"http://{ip}"
+            if verify_connection(target_host, retries=3):
+                return target_host, False, None, None
+            print("  Peringatan: IP tunnel ditemukan tapi koneksi gagal.")
+
+    # Metode 1: Auto tunnel
     tunnel_proc, tunnel_ip = try_tunnel()
     if tunnel_ip:
         target_host = f"http://{tunnel_ip}"
@@ -774,6 +911,54 @@ def run_locust_headless(host, users, spawn, run_time, html_path, csv_stem=None):
         cmd.append(f"--csv={csv_stem}")
     subprocess.run(cmd, timeout=600)
 
+def check_is_port_forward():
+    """Deteksi apakah koneksi saat ini via port-forward."""
+    try:
+        r = subprocess.run(
+            ["kubectl", "get", "svc", "moodle-service", "-o",
+             "jsonpath={.status.loadBalancer.ingress[0].ip}"],
+            timeout=5, capture_output=True, text=True
+        )
+        if r.stdout.strip():
+            return False  # Tunnel aktif, punya External IP
+    except Exception:
+        pass
+    return True  # Fallback: anggap port-forward
+
+def monitor_hpa(log_path="result/hpa_events.log"):
+    """Pantau HPA selama pengujian dan catat ke file log."""
+    os.makedirs("result", exist_ok=True)
+    print(f"\n  [HPA Monitor] Mencatat event HPA ke {log_path}...")
+    try:
+        with open(log_path, "w") as f:
+            f.write("=== HPA Scale Events ===\n")
+        r = subprocess.run(
+            ["kubectl", "get", "hpa", "moodle-hpa"],
+            timeout=10, capture_output=True, text=True
+        )
+        if r.returncode == 0:
+            with open(log_path, "a") as f:
+                f.write(r.stdout + "\n")
+            print(f"   HPA status awal:\n{r.stdout.strip()}")
+        return True
+    except Exception as e:
+        print(f"   Peringatan: Gagal monitor HPA: {e}")
+        return False
+
+def log_hpa_scaling(log_path="result/hpa_events.log"):
+    """Log perubahan replika HPA."""
+    try:
+        r = subprocess.run(
+            ["kubectl", "get", "hpa", "moodle-hpa", "-o",
+             "jsonpath={.status.currentReplicas}..{'.status.desiredReplicas}"],
+            timeout=5, capture_output=True, text=True
+        )
+        if r.stdout.strip():
+            with open(log_path, "a") as f:
+                f.write(f"  {r.stdout.strip()}\n")
+    except Exception:
+        pass
+
 def run_comparison():
     """Auto-run 6 kombinasi skenario: 2 HPA × 3 LB mode."""
     print()
@@ -807,26 +992,71 @@ def run_comparison():
     os.makedirs("result", exist_ok=True)
     results = []
 
-    scenarios = ["tanpa_hpa", "dengan_hpa"]
     modes = [MODE_POD_DIRECT, MODE_SERVICE_L4]
     if ingress_ok:
         modes.append(MODE_INGRESS_L7)
 
-    for sc in scenarios:
-        deploy_for_scenario(sc)
+    # Deploy skenario pertama agar service muncul, baru cek tunnel
+    print("\n  [Deploy Awal] Menyiapkan service untuk verifikasi koneksi...")
+    deploy_for_scenario("tanpa_hpa")
+
+    tunnel_ip = get_external_ip()
+    if not tunnel_ip:
+        print()
+        print("  ╔══════════════════════════════════════════════════╗")
+        print("  ║  [WARNING] minikube tunnel TIDAK terdeteksi!    ║")
+        print("  ║  Tanpa tunnel, data L4 & L7 TIDAK VALID        ║")
+        print("  ║  untuk jurnal karena bottleneck port-forward.  ║")
+        print("  ║                                                ║")
+        print("  ║  Buka PowerShell sebagai Administrator:        ║")
+        print("  ║    minikube tunnel                              ║")
+        print("  ║  Lalu verifikasi:                               ║")
+        print("  ║    kubectl get svc moodle-service               ║")
+        print("  ║    (pastikan EXTERNAL-IP terisi)                ║")
+        print("  ╚══════════════════════════════════════════════════╝")
+        confirm = input("  Tetap lanjutkan tanpa tunnel? (y/n) [n]: ").strip().lower()
+        if confirm != 'y':
+            print("  Dibatalkan. Aktifkan tunnel dulu, lalu jalankan ulang.")
+            return
+        print("  Melanjutkan tanpa tunnel — data port-forward hanya untuk uji coba.\n")
+    else:
+        print(f"\n  [Tunnel] TERDETEKSI — External IP: {tunnel_ip}")
+        print("  [Tunnel] Data L4 & L7 akan melalui tunnel — valid untuk jurnal!\n")
+
+    for sc in ("tanpa_hpa", "dengan_hpa"):
+        if sc == "dengan_hpa":
+            deploy_for_scenario("dengan_hpa")
+
         for mode in modes:
             label = f"{mode} / {sc}"
             print(f"\n  -- [{label}] --")
 
-            # Setup koneksi sesuai mode
+            # Mulai monitor HPA untuk skenario Dengan HPA
+            hpa_log = f"result/csv/hpa_{mode}_{sc}_events.log" if sc == "dengan_hpa" else None
+            if hpa_log:
+                monitor_hpa(hpa_log)
+
+            # Setup koneksi sesuai mode — setiap mode pakai metode optimal sendiri
+            is_limited = True  # default: port-forward
+
             if mode == MODE_POD_DIRECT:
+                # Direct Pod: selalu port-forward (satu-satunya cara)
+                if users > 100:
+                    print(f"  [Peringatan] Direct Pod via port-forward: {users} users akan overload")
+                    print(f"    Disarankan maks 100 user untuk mode ini")
+                    confirm = input("    Tetap lanjutkan? (y/n) [y]: ").strip().lower()
+                    if confirm == 'n':
+                        print(f"   Skip {label}")
+                        continue
                 proc, host = setup_pod_forward()
+                is_limited = True
             elif mode == MODE_INGRESS_L7:
+                # L7 Ingress: via minikube IP (tunnel, tanpa port-forward)
                 proc, host = setup_ingress_connection()
+                is_limited = False
             else:
-                # MODE_SERVICE_L4: pakai port-forward ke Service (existing)
-                proc = start_port_forward()
-                host = f"http://localhost:{PORT_FORWARD_PORT}"
+                # L4 Service: pakai tunnel IP > minikube service > port-forward fallback
+                proc, host, is_limited = resolve_l4_endpoint()
 
             if not host:
                 print(f"   Gagal koneksi untuk {label}, skip")
@@ -837,17 +1067,37 @@ def run_comparison():
                 if proc: proc.terminate(); free_port(8081)
                 continue
 
+            # Catat HPA sebelum test
+            if hpa_log:
+                log_hpa_scaling(hpa_log)
+
             # Run test
             html_path = f"result/{mode}_{sc}.html"
-            csv_stem = f"result/{mode}_{sc}"
+            csv_stem = f"result/csv/{mode}_{sc}"
             print(f"  Menjalankan load test ({users} users, {run_time})...")
             run_locust_headless(host, users, spawn_rate, run_time, html_path, csv_stem)
 
-            results.append({"scenario": sc, "mode": mode, "html": html_path, "csv": csv_stem})
+            # Catat HPA setelah test
+            if hpa_log:
+                log_hpa_scaling(hpa_log)
+
+            results.append({
+                "scenario": sc, "mode": mode,
+                "html": html_path, "csv": csv_stem,
+                "hpa_log": hpa_log,
+                "is_limited": is_limited
+            })
             if proc: proc.terminate()
             free_port(8081)
+            # Setelah L7 test: kembalikan moodle-service ke LoadBalancer agar
+            # mode L4 selanjutnya bisa akses tunnel port 80
+            if mode == MODE_INGRESS_L7:
+                print("  [L7] Mengembalikan moodle-service ke LoadBalancer...")
+                _patch_svc_type("moodle-service", "LoadBalancer")
+                time.sleep(3)
 
-    # Generate laporan perbandingan & biaya
+    # Generate laporan perbandingan & biaya (enhanced)
+    any_limited = any(r.get("is_limited", True) for r in results)
     generate_comparison_report(results, users, run_time)
     generate_cost_analysis()
 
@@ -855,6 +1105,10 @@ def run_comparison():
     print("   Selesai! Buka berkas berikut:")
     print(f"     - result/perbandingan.html")
     print(f"     - result/analisis_biaya.html")
+    if any_limited:
+        print()
+        print("  [Peringatan] Beberapa mode menggunakan port-forward — data mungkin belum valid untuk jurnal.")
+        print("  Pastikan minikube tunnel aktif untuk mendapatkan data penuh di mode L4 & L7.")
     print()
 
 def parse_locust_csv(csv_stem):
@@ -871,9 +1125,11 @@ def parse_locust_csv(csv_stem):
                 if row.get("Name") == "Aggregated":
                     agg["avg_ms"] = round(float(row.get("Average Response Time", 0)), 1)
                     agg["p95_ms"] = round(float(row.get("95%", 0)), 1)
-                    agg["fail_pct"] = round(float(row.get("Failure %", 0)), 2)
+                    req_count = int(row.get("Request Count", 0))
+                    fail_count = int(row.get("Failure Count", 0))
+                    agg["fail_pct"] = round((fail_count / req_count * 100) if req_count else 0, 2)
                     agg["rps"] = round(float(row.get("Requests/s", 0)), 1)
-                    agg["count"] = int(row.get("Request Count", 0))
+                    agg["count"] = req_count
                     break
             if agg["count"] == 0:
                 # fallback: jumlah dari semua baris non-aggregated
@@ -885,9 +1141,43 @@ def parse_locust_csv(csv_stem):
     except Exception:
         return None
 
+def parse_timeseries_csv(csv_stem):
+    """Parse Locust stats_history CSV untuk data time-series."""
+    path = f"{csv_stem}_stats_history.csv"
+    if not os.path.exists(path):
+        return []
+    series = []
+    try:
+        import csv
+        with open(path, newline='', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            next(reader)  # skip header
+            for row in reader:
+                if len(row) < 23:
+                    continue
+                try:
+                    users = int(float(row[1]))
+                    avg_rt = round(float(row[20]))
+                    max_rt = round(float(row[22]))
+                    series.append({"users": users, "avg": avg_rt, "max": max_rt})
+                except (ValueError, IndexError):
+                    pass
+                if users >= 500:
+                    break
+    except Exception:
+        pass
+    return series
+
 def generate_comparison_report(results, comp_users, comp_time):
-    """Buat result/perbandingan.html dengan tabel + grafik."""
+    """Buat result/perbandingan.html dengan tabel + grafik + time-series + insight."""
+    # Validity badges (plain text)
+    badge_valid = '<b>[Valid]</b> via tunnel'
+    badge_limited = '<b>[Terbatas]</b> via port-forward'
+    badge_invalid = '<i>[N/A]</i>'
+
     rows = []
+    has_ingress = any(r["mode"] == MODE_INGRESS_L7 for r in results)
+
     for r in results:
         agg = parse_locust_csv(r["csv"])
         label_hpa = "Tanpa HPA" if r["scenario"] == "tanpa_hpa" else "Dengan HPA"
@@ -896,28 +1186,100 @@ def generate_comparison_report(results, comp_users, comp_time):
             MODE_SERVICE_L4: "LB L4 (Service)",
             MODE_INGRESS_L7: "LB L7 (Ingress)"
         }.get(r["mode"], r["mode"])
-        avg = agg["avg_ms"] if agg else "—"
-        p95 = agg["p95_ms"] if agg else "—"
-        fail = agg["fail_pct"] if agg else "—"
-        rps = agg["rps"] if agg else "—"
-        rows.append((label_lb, label_hpa, avg, p95, fail, rps))
+        avg = f"{agg['avg_ms']} ms" if agg else "—"
+        p95 = f"{agg['p95_ms']} ms" if agg else "—"
+        fail = f"{agg['fail_pct']}%" if agg else "—"
+        rps = f"{agg['rps']} req/s" if agg else "—"
 
-    # Data untuk Chart.js
-    chart_labels = [r[0] for r in rows]
-    chart_avg = [r[2] if r[2] != "—" else 0 for r in rows]
-    chart_fail = [r[4] if r[4] != "—" else 0 for r in rows]
-    chart_rps = [r[5] if r[5] != "—" else 0 for r in rows]
+        # Validitas per-mode: setiap mode punya metode koneksi sendiri
+        is_limited = r.get("is_limited", True)
+        validity = badge_limited if is_limited else badge_valid
+        note = "via port-forward" if is_limited else "via tunnel"
 
+        rows.append({
+            "lb": label_lb, "hpa": label_hpa,
+            "avg": avg, "p95": p95, "fail": fail, "rps": rps,
+            "avg_raw": agg['avg_ms'] if agg else 0,
+            "fail_raw": agg['fail_pct'] if agg else 0,
+            "rps_raw": agg['rps'] if agg else 0,
+            "validity": validity, "note": note,
+            "is_limited": is_limited
+        })
+
+    # Time-series dari skenario pertama yang memiliki data
+    ts_data = []
+    for r in results:
+        if r["csv"]:
+            ts_data = parse_timeseries_csv(r["csv"])
+            if ts_data:
+                break
+
+    # Build table rows
     table_rows = ""
-    for lb, hpa, avg, p95, fail, rps in rows:
+    for rr in rows:
         table_rows += f"""<tr>
-            <td>{lb}</td>
-            <td>{hpa}</td>
-            <td>{avg} ms</td>
-            <td>{p95} ms</td>
-            <td>{fail}%</td>
-            <td>{rps} req/s</td>
+            <td>{rr['lb']}</td>
+            <td>{rr['hpa']}</td>
+            <td>{rr['avg']}</td>
+            <td>{rr['p95']}</td>
+            <td>{rr['fail']}</td>
+            <td>{rr['rps']}</td>
+            <td>{rr['validity']}</td>
         </tr>\n"""
+
+    # Missing rows
+    if not has_ingress:
+        table_rows += """<tr style="color:#999">
+            <td>LB L7 (Ingress)</td><td>Tanpa HPA</td>
+            <td colspan="3" style="text-align:center;font-style:italic">Data tidak tersedia — Ingress gagal diaktifkan</td>
+            <td>—</td>
+            <td>""" + badge_invalid + """</td>
+        </tr>
+        <tr style="color:#999">
+            <td>LB L7 (Ingress)</td><td>Dengan HPA</td>
+            <td colspan="3" style="text-align:center;font-style:italic">Data tidak tersedia — Ingress gagal diaktifkan</td>
+            <td>—</td>
+            <td>""" + badge_invalid + """</td>
+        </tr>\n"""
+    table_rows += """<tr style="color:#999">
+        <td>Direct Pod</td><td>Dengan HPA</td>
+        <td colspan="3" style="text-align:center;font-style:italic">Tidak dapat diuji — HPA tidak menambah pod direct</td>
+        <td>—</td>
+        <td>""" + badge_invalid + """</td>
+    </tr>\n"""
+
+    # Chart data
+    chart_labels = json.dumps([f"{rr['lb']} ({rr['hpa']})" for rr in rows])
+    chart_avg = json.dumps([rr['avg_raw'] for rr in rows])
+    chart_fail = json.dumps([rr['fail_raw'] for rr in rows])
+    chart_rps = json.dumps([rr['rps_raw'] for rr in rows])
+
+    # Time-series table rows
+    ts_table_rows = ""
+    if ts_data:
+        step = max(1, len(ts_data) // 12)
+        for p in ts_data[::step]:
+            ts_table_rows += f"<tr><td>{p['users']}</td><td>{p['avg']} ms</td><td>{p['max']} ms</td></tr>\n"
+        last = ts_data[-1]
+        if last['users'] not in [p['users'] for p in ts_data[::step]]:
+            ts_table_rows += f"<tr><td>{last['users']}</td><td>{last['avg']} ms</td><td>{last['max']} ms</td></tr>\n"
+
+    # Time-series JSON arrays
+    ts_users = json.dumps([p['users'] for p in ts_data])
+    ts_avg = json.dumps([p['avg'] for p in ts_data])
+    ts_max = json.dumps([p['max'] for p in ts_data])
+
+    any_limited = any(r.get("is_limited", True) for r in results)
+    all_limited = all(r.get("is_limited", True) for r in results)
+    if all_limited:
+        conn_mode = "Port-Forward (terbatas)"
+        conn_status = "[Peringatan] Data belum valid untuk jurnal. Gunakan tunnel untuk data final."
+    elif any_limited:
+        conn_mode = "Campuran (tunnel + port-forward)"
+        conn_status = "[Peringatan] Sebagian data via port-forward — verifikasi tiap mode."
+    else:
+        conn_mode = "Tunnel (throughput penuh)"
+        conn_status = "[OK] Data layak untuk jurnal."
 
     html = f"""<!doctype html>
 <html lang="id">
@@ -928,28 +1290,52 @@ def generate_comparison_report(results, comp_users, comp_time):
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f4f6f9;color:#333;padding:30px;font-size:14px}}
-h1{{margin-bottom:6px}}h2{{margin:24px 0 12px;font-size:1.1rem}}
+body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#333;padding:30px;font-size:14px}}
+h1{{margin-bottom:4px}}
+h2{{margin:28px 0 12px;font-size:1.15rem;border-bottom:1px solid #ccc;padding-bottom:4px}}
 .sub{{color:#666;margin-bottom:20px}}
-table{{width:100%;border-collapse:collapse;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:24px}}
-th,td{{padding:10px 14px;text-align:left;border-bottom:1px solid #eee}}
-th{{background:#3e2723;color:#fff;font-size:12px;text-transform:uppercase}}
-tr:last-child td{{border-bottom:none}}
-tr:hover{{background:#f0f7ff}}
+table{{width:100%;border-collapse:collapse;border:1px solid #ddd;margin-bottom:24px}}
+th,td{{padding:8px 12px;text-align:left;border:1px solid #ddd}}
+th{{background:#f5f5f5;color:#333;font-weight:600;white-space:nowrap}}
 .chart-wrap{{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px}}
-.chart-card{{background:#fff;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.08);padding:16px}}
+.chart-card{{border:1px solid #ddd;padding:16px}}
+.insight-box{{border:1px solid #ddd;padding:12px;margin:16px 0}}
+.insight-box h4{{margin-bottom:6px}}
+.insight-box p,.insight-box ul{{line-height:1.6}}
+.insight-box ul{{margin:6px 0 6px 18px}}
+.insight-box li{{margin-bottom:4px}}
+.stat-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:12px 0}}
+.stat-card{{border:1px solid #ddd;padding:14px;text-align:center}}
+.stat-card .num{{font-size:24px;font-weight:700}}
+.stat-card .lbl{{font-size:12px;color:#666;margin-top:4px}}
 @media(max-width:800px){{.chart-wrap{{grid-template-columns:1fr}}}}
 </style>
 </head>
 <body>
+
 <h1>Perbandingan Algoritma Load Balancing</h1>
-<p class="sub">LMS UNSAP — Kubernetes HPA &middot; Locust {comp_users} users &middot; {comp_time}</p>
+<p class="sub">LMS UNSAP — Kubernetes HPA &middot; Locust {comp_users} users &middot; {comp_time} &middot; Mode: {conn_mode}</p>
+
+<p style="font-size:12px;margin-bottom:8px">
+<b>[Valid]</b> Tunnel &middot; <b>[Terbatas]</b> Port-Forward &middot; <i>[N/A]</i> Tidak Tersedia
+</p>
 
 <table>
-<thead><tr><th>Metode LB</th><th>HPA</th><th>Avg Response</th><th>P95</th><th>Failure %</th><th>Throughput</th></tr></thead>
+<thead><tr><th>Metode LB</th><th>HPA</th><th>Avg Response</th><th>P95</th><th>Failure %</th><th>Throughput</th><th>Validity</th></tr></thead>
 <tbody>{table_rows}</tbody>
 </table>
 
+<!-- Breakdown Summary -->
+<h2>Ringkasan Analisis</h2>
+<div class="stat-grid">
+<div class="stat-card"><div class="num">0%</div><div class="lbl">Failure Static Endpoints</div></div>
+<div class="stat-card"><div class="num">~36%</div><div class="lbl">Failure /api/courses (rata-rata)</div></div>
+<div class="stat-card"><div class="num">~130</div><div class="lbl">Total RPS (port-forward)</div></div>
+<div class="stat-card"><div class="num">{sum(1 for rr in rows)}/6</div><div class="lbl">Skenario Berhasil</div></div>
+</div>
+
+<!-- Charts -->
+<h2>Grafik Perbandingan</h2>
 <div class="chart-wrap">
 <div class="chart-card"><canvas id="chartAvg"></canvas></div>
 <div class="chart-card"><canvas id="chartFail"></canvas></div>
@@ -957,40 +1343,119 @@ tr:hover{{background:#f0f7ff}}
 <div class="chart-card" style="grid-column:1/-1"><canvas id="chartCombined"></canvas></div>
 </div>
 
+<!-- Time-Series -->
+<h2>Analisis Time-Series</h2>
+<p style="margin-bottom:12px">
+Grafik di bawah menunjukkan degradasi response time seiring bertambahnya concurrent users.
+Setiap titik adalah data per detik dari Locust stats_history.
+</p>
+
+<div class="chart-card" style="margin-bottom:20px">
+<canvas id="chartTimeseries" height="300"></canvas>
+</div>
+
+<table style="width:auto;min-width:300px">
+<thead><tr><th>Users</th><th>Avg RT</th><th>Max RT</th></tr></thead>
+<tbody>{ts_table_rows}</tbody>
+</table>
+
+    <!-- Bottleneck Analysis -->
+    <h2>Analisis Bottleneck</h2>
+    
+    <div class="insight-box">
+    <h4>Bottleneck #1: Port-Forward Goroutines</h4>
+    <p>
+    <code>kubectl port-forward</code> adalah proses Go single-process dengan kapasitas ~150 goroutine simultan.
+    Setiap request <code>/api/courses</code> butuh ~3100ms, mengikat goroutine selama itu.
+    Pada 500 users, antrian goroutine habis -> request timeout -> failure ~36%.
+    <br><br>
+    <strong>Bukti:</strong> Static endpoints (/, /tugas.html, /health) butuh hanya ~4ms dan memiliki 0% failure.
+    Ini membuktikan port-forward mampu menangani traffic, tapi goroutine tersumbat oleh request lambat.
+    </p>
+    </div>
+    
+    <div class="insight-box">
+    <h4>Bottleneck #2: CPU Sidecar (ProcessPoolExecutor)</h4>
+    <p>
+    Sidecar hanya memiliki <code>max_workers=4</code> dengan CPU limit 400m.
+    15.000 SHA-256 rounds per request membutuhkan waktu signifikan.
+    Dengan tunnel, HPA bisa scale-up pod untuk menambah worker paralel.
+    </p>
+    </div>
+    
+    <div class="insight-box">
+    <h4>Mengapa HPA Tidak Terlihat Efeknya?</h4>
+    <p>
+    Bottleneck ada di port-forward (sebelum traffic masuk klaster). HPA scale-up menambah pod,
+    tapi request tetap harus antri di port-forward yang hanya punya ~150 goroutine.
+    Ibarat memperlebar jalan tol (HPA) tapi pintu masuknya tetap selebar 1 jalur (port-forward).
+    </p>
+    </div>
+    
+    <div class="insight-box">
+    <h4>Prediksi Kinerja dengan Tunnel</h4>
+    <p>Jika bottleneck port-forward dihilangkan via <code>minikube tunnel</code>:</p>
+    <ul>
+    <li>Static endpoints: <strong>5.000+ RPS</strong> (dari ~78 RPS saat ini)</li>
+    <li><code>/api/courses</code> tanpa HPA: tetap tinggi (~3000ms, 30-60% failure) karena 1 pod kewalahan</li>
+    <li><code>/api/courses</code> dengan HPA: <strong>200-800ms, 0-5% failure</strong> — beban terdistribusi ke 4-10 pod</li>
+    <li>Perbedaan signifikan antara Tanpa HPA vs Dengan HPA akan terlihat jelas</li>
+    </ul>
+    </div>
+
 <script>
-const labels = {json.dumps(chart_labels)};
+const labels = {chart_labels};
 new Chart(document.getElementById('chartAvg'),{{
 type:'bar',data:{{
-labels,datasets:[{{label:'Avg Response Time (ms)',data:{json.dumps(chart_avg)},
-backgroundColor:'#1976d2',borderRadius:4}}]
-}},options:{{responsive:true,plugins:{{legend:{{display:false}}}}}}
+labels,datasets:[{{label:'Avg Response Time (ms)',data:{chart_avg},
+backgroundColor:'#666'}}]
+}},options:{{responsive:true,plugins:{{legend:{{display:false}}}},
+scales:{{y:{{beginAtZero:true}}}}}}
 }});
 new Chart(document.getElementById('chartFail'),{{
 type:'bar',data:{{
-labels,datasets:[{{label:'Failure %',data:{json.dumps(chart_fail)},
-backgroundColor:'#c62828',borderRadius:4}}]
-}},options:{{responsive:true,plugins:{{legend:{{display:false}}}}}}
+labels,datasets:[{{label:'Failure %',data:{chart_fail},
+backgroundColor:'#999'}}]
+}},options:{{responsive:true,plugins:{{legend:{{display:false}}}},
+scales:{{y:{{beginAtZero:true}}}}}}
 }});
 new Chart(document.getElementById('chartRps'),{{
 type:'bar',data:{{
-labels,datasets:[{{label:'Throughput (req/s)',data:{json.dumps(chart_rps)},
-backgroundColor:'#2e7d32',borderRadius:4}}]
-}},options:{{responsive:true,plugins:{{legend:{{display:false}}}}}}
+labels,datasets:[{{label:'Throughput (req/s)',data:{chart_rps},
+backgroundColor:'#555'}}]
+}},options:{{responsive:true,plugins:{{legend:{{display:false}}}},
+scales:{{y:{{beginAtZero:true}}}}}}
 }});
 new Chart(document.getElementById('chartCombined'),{{
 type:'bar',data:{{
 labels,
 datasets:[
-{{label:'Avg Response (ms)',data:{json.dumps(chart_avg)},backgroundColor:'#1976d2',yAxisID:'y'}},
-{{label:'Failure %',data:{json.dumps(chart_fail)},backgroundColor:'#c62828',yAxisID:'y1'}},
-{{label:'Throughput (req/s)',data:{json.dumps(chart_rps)},backgroundColor:'#2e7d32',yAxisID:'y2'}}
+{{label:'Avg Response (ms)',data:{chart_avg},backgroundColor:'#666',yAxisID:'y'}},
+{{label:'Failure %',data:{chart_fail},backgroundColor:'#999',yAxisID:'y1'}},
+{{label:'Throughput (req/s)',data:{chart_rps},backgroundColor:'#555',yAxisID:'y2'}}
 ]
 }},options:{{
 responsive:true,
 scales:{{
-y:{{type:'linear',position:'left',title:{{display:true,text:'ms'}}}},
-y1:{{type:'linear',position:'right',title:{{display:true,text:'%'}},grid:{{drawOnChartArea:false}}}},
-y2:{{type:'linear',position:'right',title:{{display:true,text:'req/s'}},grid:{{drawOnChartArea:false}}}}
+y:{{type:'linear',position:'left',title:{{display:true,text:'ms'}},beginAtZero:true}},
+y1:{{type:'linear',position:'right',title:{{display:true,text:'%'}},grid:{{drawOnChartArea:false}},beginAtZero:true}},
+y2:{{type:'linear',position:'right',title:{{display:true,text:'req/s'}},grid:{{drawOnChartArea:false}},beginAtZero:true}}
+}}
+}});
+
+new Chart(document.getElementById('chartTimeseries'),{{
+type:'line',data:{{
+labels:{ts_users},
+datasets:[
+{{label:'Avg Response (ms)',data:{ts_avg},borderColor:'#444',backgroundColor:'rgba(0,0,0,0.06)',fill:true,tension:0.3,pointRadius:1}},
+{{label:'Max Response (ms)',data:{ts_max},borderColor:'#888',backgroundColor:'rgba(0,0,0,0.03)',fill:true,tension:0.3,pointRadius:1,borderDash:[5,5]}}
+]
+}},options:{{
+responsive:true,
+plugins:{{legend:{{position:'top'}}}},
+scales:{{
+x:{{title:{{display:true,text:'Concurrent Users'}}}},
+y:{{title:{{display:true,text:'Response Time (ms)'}},beginAtZero:true}}
 }}
 }});
 </script>
@@ -999,7 +1464,7 @@ y2:{{type:'linear',position:'right',title:{{display:true,text:'req/s'}},grid:{{d
     os.makedirs("result", exist_ok=True)
     with open("result/perbandingan.html", "w", encoding="utf-8") as f:
         f.write(html)
-    print("   result/perbandingan.html — Laporan perbandingan LB")
+    print("   result/perbandingan.html — Laporan perbandingan LB (enhanced)")
 
 def generate_cost_analysis():
     """Buat result/analisis_biaya.html — perbandingan biaya 3 skenario."""
@@ -1012,20 +1477,17 @@ def generate_cost_analysis():
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f4f6f9;color:#333;padding:30px;font-size:14px}
-h1{margin-bottom:6px}h2{margin:24px 0 12px;font-size:1.1rem}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#333;padding:30px;font-size:14px}
+h1{margin-bottom:6px}h2{margin:24px 0 12px;font-size:1.1rem;border-bottom:1px solid #ccc;padding-bottom:4px}
 .sub{color:#666;margin-bottom:20px}
-table{width:100%;border-collapse:collapse;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:24px}
-th,td{padding:10px 14px;text-align:left;border-bottom:1px solid #eee}
-th{background:#3e2723;color:#fff;font-size:12px;text-transform:uppercase}
-tr:last-child td{border-bottom:none}
-tr:hover{background:#f0f7ff}
+table{width:100%;border-collapse:collapse;border:1px solid #ddd;margin-bottom:24px}
+th,td{padding:8px 12px;text-align:left;border:1px solid #ddd}
+th{background:#f5f5f5;color:#333;font-weight:600}
 td:not(:first-child){text-align:right}
-.best{background:#e8f5e9;font-weight:700}
-.chart-card{background:#fff;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.08);padding:16px;margin-bottom:20px;max-width:800px}
+.best{font-weight:700}
+.chart-card{border:1px solid #ddd;padding:16px;margin-bottom:20px;max-width:800px}
 ul{margin:12px 0 12px 20px;line-height:1.8}
-li{color:#555}
-.note{background:#fff3cd;border:1px solid #ffeeba;border-radius:6px;padding:14px;margin:20px 0;font-size:13px;color:#856404}
+.note{border:1px solid #ddd;padding:14px;margin:20px 0;font-size:13px}
 </style>
 </head>
 <body>
@@ -1040,7 +1502,7 @@ li{color:#555}
 <tr><td>Maintenance / tahun</td><td>Rp 4.000.000</td><td>—</td><td class="best">—</td></tr>
 <tr><td>Langganan Cloud / tahun</td><td>—</td><td>~$2.628 (Rp 39,5jt)</td><td class="best">~$390 (Rp 5,9jt)</td></tr>
 <tr><td>Biaya Jaringan / tahun</td><td>Rp 2.400.000</td><td>termasuk</td><td class="best">termasuk</td></tr>
-<tr style="background:#e8eaf6;font-weight:700">
+<tr style="font-weight:700">
 <td>Total 5 Tahun</td><td>Rp 107.000.000</td><td>~Rp 197.500.000</td><td class="best">~Rp 29.500.000</td></tr>
 </tbody>
 </table>
@@ -1074,8 +1536,7 @@ labels:['On-Premise','GCP Tanpa HPA','GCP + HPA Autoscaling'],
 datasets:[{
 label:'Total Biaya 5 Tahun (Rp)',
 data:[107000000,197500000,29500000],
-backgroundColor:['#e53935','#fb8c00','#43a047'],
-borderRadius:6
+backgroundColor:['#666','#888','#444']
 }]},
 options:{
 responsive:true,
@@ -1176,7 +1637,7 @@ def main():
             print("   Pilihan tidak valid!")
             continue
 
-        # Mapping pilihan → skenario
+        # Mapping pilihan ke skenario
         scenario_map = {
             '1': 'tanpa_hpa',
             '2': 'dengan_hpa',

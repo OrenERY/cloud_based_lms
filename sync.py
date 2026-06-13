@@ -122,7 +122,7 @@ data:
 
     def _do_hash():
         data = "LMS-UNSAP-stress-payload"
-        for _ in range(15000):   # turun dari 60k → 15k
+        for _ in range(15000):   # turun dari 60k ke 15k
             data = hashlib.sha256(data.encode()).hexdigest()
         return data
 

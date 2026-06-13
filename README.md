@@ -37,7 +37,7 @@ Repository ini berisi prototipe arsitektur klaster Kubernetes untuk menguji elas
 | `sync.py`                       | Script otomatis untuk sinkronisasi file HTML/CSS ke manifes Kubernetes dan deploy ulang ke cluster (nginx tuning, sidecar stress, HPA, Ingress)                                           |
 | `lms-setup.yaml`                | _Auto-generated_ — Manifes Kubernetes (dibuat oleh `sync.py`) berisi ConfigMaps, Deployment Nginx + Python sidecar, Service, Ingress, dan HPA                                              |
 | `locustfile.py`                 | Script pengujian Locust untuk mensimulasikan trafik mahasiswa concurrent                                                                                                                  |
- | `start.py`                      | **Full Streamlined Runner** — Otomatisasi penuh: Docker -> Minikube -> Metrics Server -> Deploy -> Koneksi -> Load Test + Perbandingan LB & Biaya, semua dalam satu perintah `python start.py` |
+ | `start.py`                      | **Full Streamlined Runner** — Otomatisasi penuh: Docker, Minikube, Metrics Server, Deploy, Koneksi, Load Test, Perbandingan LB dan Biaya, semua dalam satu perintah `python start.py` |
 | `requirements.txt`              | Dependensi Python (Locust)                                                                                                                                                                |
 | `result/`                       | Folder laporan hasil pengujian (HTML report)                                                                                                                                              |
 | `result/perbandingan.html`      | _Auto-generated_ — Laporan perbandingan Load Balancing (tabel + grafik Chart.js)                                                                                                           |
@@ -75,25 +75,40 @@ pip install -r requirements.txt
 
 ---
 
-### Langkah 2: Jalankan Streamlined Runner
+### Langkah 2: Persiapan Tunnel (WAJIB untuk data valid)
 
-Cukup jalankan **satu perintah** berikut — script akan **otomatis** menangani semuanya (Docker, Minikube, Metrics Server, Deploy, Koneksi, dan Load Test):
+**Catatan penting**: Tunnel `minikube tunnel` WAJIB dibuka manual oleh Anda sebelum menjalankan `start.py` jika ingin data pengujian yang valid untuk jurnal. Tanpa tunnel, script akan fallback ke `kubectl port-forward` yang memiliki kapasitas terbatas (~150 koneksi simultan) sehingga data tidak merepresentasikan performa HPA yang sebenarnya.
+
+**Langkah wajib** (buka PowerShell baru sebagai Administrator):
+
+```powershell
+minikube tunnel
+```
+
+Biarkan terminal ini terbuka selama pengujian berlangsung. Verifikasi tunnel berhasil dengan mengecek External IP:
+
+```bash
+kubectl get svc moodle-service
+# Kolom EXTERNAL-IP harus menampilkan alamat IP (bukan <pending>)
+```
+
+### Langkah 3: Jalankan Streamlined Runner
+
+Setelah tunnel aktif, jalankan di terminal terpisah (tanpa admin):
 
 ```bash
 python start.py
 ```
 
-> **INFO**: Script `start.py` akan otomatis:
-> 1. Memverifikasi prasyarat (Docker, Minikube, kubectl, Locust)
-> 2. Memulai Minikube jika belum berjalan (6 CPU, 7GB RAM)
-> 3. Mengaktifkan Metrics Server untuk HPA
-> 4. Deploy manifest terbaru ke klaster
-> 5. Mencari koneksi terbaik (tunnel -> minikube service -> port-forward)
-> 6. Menjalankan load test sesuai skenario pilihan
->
-> **Tentang Tunnel**: Script akan otomatis mencoba `minikube tunnel`. Jika tunnel memerlukan hak Administrator dan gagal, script akan fallback ke port-forward dengan **150 users** (sudah cukup untuk memicu HPA dan menghasilkan data jurnal).
->
-> **Opsional (untuk 500 users)**: Jika ingin throughput penuh, buka PowerShell terpisah sebagai **Administrator** dan jalankan `minikube tunnel` sebelum memulai `start.py`.
+Script akan menangani hal berikut secara otomatis:
+1. Memverifikasi prasyarat (Docker, Minikube, kubectl, Locust)
+2. Memulai Minikube jika belum berjalan (6 CPU, 7GB RAM)
+3. Mengaktifkan Metrics Server untuk HPA
+4. Deploy manifest terbaru ke klaster
+5. Mendeteksi tunnel yang sudah aktif dan menggunakannya
+6. Menjalankan load test sesuai skenario pilihan
+
+> **Jika tunnel tidak aktif**: Script akan mendeteksi bahwa tidak ada tunnel berjalan. Untuk skenario A/B, script akan menggunakan port-forward dengan maksimal 150 users (cukup untuk demonstrasi, tapi data tidak valid untuk jurnal). Untuk Skenario C (perbandingan LB), script akan memberikan peringatan dan merekomendasikan aktivasi tunnel. Untuk data jurnal yang valid, HENTIKAN script, aktifkan tunnel (langkah 2), lalu jalankan ulang.
 
 Anda akan disajikan menu interaktif:
 ```
@@ -118,19 +133,19 @@ Pilih skenario:
 #### Deskripsi Pilihan Pengujian:
 
 * **Opsi 1: Skenario A: Tanpa HPA (Headless)**
-  * **Alur Otomatis**: Cek Docker -> Start Minikube -> Enable Metrics -> Deploy manifest -> Hapus HPA -> Kunci 1 Pod -> Setup koneksi -> Load test -> Simpan `result/tanpa_hpa.html`.
-  * **Tujuan**: Membuktikan server tunggal tradisional akan mengalami kelebihan beban (*high response times* & *failure rates*) saat lonjakan trafik terjadi.
+  * **Alur Otomatis**: Cek Docker, Start Minikube, Enable Metrics, Deploy manifest, Hapus HPA, Kunci 1 Pod, Setup koneksi, Load test, lalu simpan `result/tanpa_hpa.html`.
+  * **Tujuan**: Membuktikan server tunggal tradisional akan mengalami kelebihan beban (*high response times* dan *failure rates*) saat lonjakan trafik terjadi.
 
 * **Opsi 2: Skenario B: Dengan HPA (Headless)**
-  * **Alur Otomatis**: Cek Docker -> Start Minikube -> Enable Metrics -> Deploy manifest + HPA -> Autoscaling (1-10 Pods) -> Setup koneksi -> Load test -> Simpan `result/dengan_hpa.html`.
-  * **Tujuan**: Membuktikan keandalan autoscaling dalam membagi beban trafik secara otomatis ke pod-pod baru sehingga *failure rate* ditekan ke tingkat minimal/0%.
+  * **Alur Otomatis**: Cek Docker, Start Minikube, Enable Metrics, Deploy manifest + HPA, Autoscaling (1-10 Pods), Setup koneksi, Load test, lalu simpan `result/dengan_hpa.html`.
+  * **Tujuan**: Membuktikan keandalan autoscaling dalam membagi beban trafik secara otomatis ke pod-pod baru sehingga *failure rate* ditekan ke tingkat minimal (0%).
 
 * **Opsi 3: Uji Interaktif (Locust Web UI)**
-  * **Alur Otomatis**: Full setup -> Membuka LMS dan Locust Web UI (`http://localhost:8089`) di browser.
+  * **Alur Otomatis**: Full setup, buka LMS dan Locust Web UI (`http://localhost:8089`) di browser.
   * **Cara Menggunakan**: Masukkan parameter pengujian di Web UI lalu klik *Start swarming*.
 
-* **Opsi 4: Skenario C: Perbandingan LB & Biaya**
-  * **Alur Otomatis**: Setup cluster -> Enable Ingress -> Auto-run 6 kombinasi (3 mode LB x 2 mode HPA) dengan Locust headless (150 users, 3 menit) -> Generate laporan HTML:
+* **Opsi 4: Skenario C: Perbandingan LB dan Biaya**
+  * **Alur Otomatis**: Setup cluster, Enable Ingress, Auto-run 6 kombinasi (3 mode LB x 2 mode HPA) dengan Locust headless (150 users, 3 menit), lalu generate laporan HTML:
     * **`result/perbandingan.html`** — Tabel perbandingan + grafik Chart.js (Avg Response, P95, Failure %, RPS)
     * **`result/analisis_biaya.html`** — Analisis biaya 5 tahun: On-Premise vs GCP tanpa HPA vs GCP + HPA
   * **Tujuan**: Membuktikan bahwa Layer 7 LB (Ingress) memberikan performa lebih stabil, dan Autoscaling menghemat biaya cloud secara signifikan.
