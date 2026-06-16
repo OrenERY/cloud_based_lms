@@ -1,338 +1,69 @@
+"""
+Sinkronisasi file HTML/CSS lokal ke manifes Kubernetes dan deploy ke cluster.
+Membaca template dari k8s/ directory, menggabungkannya, dan menerapkan ke klaster.
+"""
 import sys
 import subprocess
+import os
+
+K8S_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "k8s")
+OUTPUT_FILE = "lms-setup.yaml"
+
 
 def indent(text, spaces=4):
+    """Indent each line of text by given spaces."""
     return '\n'.join(' ' * spaces + line if line.strip() else line for line in text.splitlines())
 
+
+def read_file(path):
+    with open(path, 'r', encoding='utf-8') as f:
+        return f.read()
+
+
+# Baca file statis lokal (TIDAK DIMODIFIKASI — hanya dibaca)
 print("Membaca file lokal...")
 try:
-    with open('index.html', 'r', encoding='utf-8') as f:
-        index_content = f.read()
-    with open('tugas.html', 'r', encoding='utf-8') as f:
-        tugas_content = f.read()
-    with open('style.css', 'r', encoding='utf-8') as f:
-        style_content = f.read()
+    index_content = read_file('index.html')
+    tugas_content = read_file('tugas.html')
+    style_content = read_file('style.css')
 except Exception as e:
     print(f"Error: gagal membaca file lokal: {e}")
     sys.exit(1)
 
-yaml_template = f"""# LMS UNSAP - lms-setup.yaml (auto-generated)
-
-# 1. ConfigMap: index.html (Dashboard)
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: lms-html-index
-data:
-  index.html: |
-{indent(index_content, 4)}
-
----
-# 2. ConfigMap: tugas.html (Halaman Pengumpulan Tugas)
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: lms-html-tugas
-data:
-  tugas.html: |
-{indent(tugas_content, 4)}
-
----
-# 3. ConfigMap: style.css (Stylesheet)
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: lms-css-style
-data:
-  style.css: |
-{indent(style_content, 4)}
-
----
-# 4. ConfigMap: nginx.conf (main config tuning)
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: lms-nginx-main-conf
-data:
-  nginx.conf: |
-    worker_processes auto;
-    events {{
-        worker_connections 2048;
-        use epoll;
-    }}
-    http {{
-        include       /etc/nginx/mime.types;
-        default_type  application/octet-stream;
-        sendfile        on;
-        keepalive_timeout  65;
-        include /etc/nginx/conf.d/*.conf;
-    }}
-
----
-# 4b. ConfigMap: nginx default.conf (multi-page routing)
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: lms-nginx-conf
-data:
-  default.conf: |
-    server {{
-        listen 80;
-        server_name localhost;
-        root /usr/share/nginx/html;
-        index index.html;
-
-        # Gzip dimatikan agar CPU fokus ke stress endpoint
-        gzip off;
-
-        location / {{
-            try_files $uri $uri/ /index.html;
-        }}
-
-        # Health check endpoint – dipakai Locust & k8s probe
-        location /health {{
-            access_log off;
-            return 200 "OK\\n";
-            add_header Content-Type text/plain;
-        }}
-
-        # Proxy ke sidecar Python stress endpoint
-        location /api/courses {{
-            proxy_pass http://127.0.0.1:5000/api/courses;
-            proxy_set_header Host $host;
-            proxy_connect_timeout 5s;
-            proxy_read_timeout    10s;
-        }}
-    }}
-
----
-# 4c. ConfigMap: CPU Stress Script (Python sidecar)
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: lms-stress-script
-data:
-  stress_server.py: |
-    #!/usr/bin/env python3
-    import hashlib, json
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-    from concurrent.futures import ProcessPoolExecutor
-
-    POOL = ProcessPoolExecutor(max_workers=4)
-
-    def _do_hash():
-        data = "LMS-UNSAP-stress-payload"
-        for _ in range(15000):   # turun dari 60k ke 15k
-            data = hashlib.sha256(data.encode()).hexdigest()
-        return data
-
-    class StressHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.path == "/api/courses":
-                future = POOL.submit(_do_hash)
-                result = future.result()
-                resp = json.dumps({{
-                    "status": "ok",
-                    "hash_rounds": 15000,
-                    "courses": ["Cloud Computing", "PKS-I", "Matematika Diskrit"]
-                }})
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(resp.encode())
-            else:
-                self.send_response(404)
-                self.end_headers()
-        def log_message(self, *args): pass
-
-    if __name__ == "__main__":
-        server = HTTPServer(("0.0.0.0", 5000), StressHandler)
-        print("Stress server running on :5000")
-        server.serve_forever()
-
----
-# 5. Deployment
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: moodle-deployment
-  labels:
-    app: moodle-app
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: moodle-app
-  template:
-    metadata:
-      labels:
-        app: moodle-app
-    spec:
-      terminationGracePeriodSeconds: 10
-      containers:
-        - name: moodle
-          image: nginx:alpine
-          ports:
-            - containerPort: 80
-          resources:
-            requests:
-              cpu: "100m"
-            limits:
-              cpu: "300m"
-          volumeMounts:
-            - name: html-index
-              mountPath: /usr/share/nginx/html/index.html
-              subPath: index.html
-            - name: html-tugas
-              mountPath: /usr/share/nginx/html/tugas.html
-              subPath: tugas.html
-            - name: css-style
-              mountPath: /usr/share/nginx/html/style.css
-              subPath: style.css
-            - name: nginx-conf
-              mountPath: /etc/nginx/conf.d/default.conf
-              subPath: default.conf
-            - name: nginx-main-conf
-              mountPath: /etc/nginx/nginx.conf
-              subPath: nginx.conf
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 80
-            initialDelaySeconds: 2
-            periodSeconds: 2
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 80
-            initialDelaySeconds: 5
-            periodSeconds: 5
-        # Sidecar: Python CPU stress server
-        - name: stress-sidecar
-          image: python:3.11-alpine
-          imagePullPolicy: IfNotPresent
-          command: ["python3", "/scripts/stress_server.py"]
-          ports:
-            - containerPort: 5000
-          resources:
-            requests:
-              cpu: "200m"
-            limits:
-              cpu: "400m"
-          volumeMounts:
-            - name: stress-script
-              mountPath: /scripts/stress_server.py
-              subPath: stress_server.py
-      volumes:
-        - name: html-index
-          configMap:
-            name: lms-html-index
-        - name: html-tugas
-          configMap:
-            name: lms-html-tugas
-        - name: css-style
-          configMap:
-            name: lms-css-style
-        - name: nginx-conf
-          configMap:
-            name: lms-nginx-conf
-        - name: nginx-main-conf
-          configMap:
-            name: lms-nginx-main-conf
-        - name: stress-script
-          configMap:
-            name: lms-stress-script
-
----
-# 6. Service
-apiVersion: v1
-kind: Service
-metadata:
-  name: moodle-service
-spec:
-  type: LoadBalancer
-  ports:
-    - port: 80
-      targetPort: 80
-      protocol: TCP
-  selector:
-    app: moodle-app
-
----
-# 7. Ingress (Nginx L7 Load Balancer)
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: moodle-ingress
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
-spec:
-  ingressClassName: nginx
-  rules:
-  - http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: moodle-service
-            port:
-              number: 80
-
----
-# 8. HorizontalPodAutoscaler
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: moodle-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: moodle-deployment
-  minReplicas: 1
-  maxReplicas: 10
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 30   # Scale-up lebih dini jika CPU > 30%
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 0
-      policies:
-      - type: Percent
-        value: 100
-        periodSeconds: 15
-      - type: Pods
-        value: 8
-        periodSeconds: 15
-      selectPolicy: Max
-    scaleDown:
-      stabilizationWindowSeconds: 30
-      policies:
-      - type: Percent
-        value: 100
-        periodSeconds: 15
-      - type: Pods
-        value: 4
-        periodSeconds: 15
-      selectPolicy: Max
-"""
-
+# Baca dan gabungkan semua template dari k8s/ directory
+print(f"Membaca template dari {K8S_DIR}/...")
 try:
-    with open('lms-setup.yaml', 'w', encoding='utf-8') as f:
-        f.write(yaml_template)
-    print("lms-setup.yaml berhasil diperbarui.")
+    k8s_files = sorted(f for f in os.listdir(K8S_DIR) if f.endswith('.yaml'))
+    if not k8s_files:
+        print(f"Error: tidak ada file YAML di {K8S_DIR}/")
+        sys.exit(1)
+
+    parts = []
+    for fname in k8s_files:
+        content = read_file(os.path.join(K8S_DIR, fname))
+        parts.append(f"# === {fname} ===\n{content}")
+    template = "\n---\n".join(parts)
 except Exception as e:
-    print(f"Error: gagal memperbarui lms-setup.yaml: {e}")
+    print(f"Error: gagal membaca template dari k8s/: {e}")
     sys.exit(1)
 
+# Replace placeholders with indented content
+manifest = template.replace("{{INDEX_HTML}}", indent(index_content, 4))
+manifest = manifest.replace("{{TUGAS_HTML}}", indent(tugas_content, 4))
+manifest = manifest.replace("{{STYLE_CSS}}", indent(style_content, 4))
+
 try:
-    print("Menerapkan manifest ke Kubernetes...")
-    subprocess.run(["kubectl", "apply", "-f", "lms-setup.yaml"], check=True)
+    with open(OUTPUT_FILE, 'w', encoding='utf-8', newline='') as f:
+        f.write(manifest)
+    print(f"{OUTPUT_FILE} berhasil diperbarui.")
+except Exception as e:
+    print(f"Error: gagal menulis {OUTPUT_FILE}: {e}")
+    sys.exit(1)
+
+# Apply to cluster
+print("Menerapkan manifes ke klaster...")
+try:
+    subprocess.run(["kubectl", "apply", "-f", OUTPUT_FILE], check=True)
     print("Merestart pod deployment...")
     subprocess.run(["kubectl", "rollout", "restart", "deployment", "moodle-deployment"], check=True)
     print("Sinkronisasi & deployment sukses!")

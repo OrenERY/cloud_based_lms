@@ -1,0 +1,13 @@
+# Service: moodle-service
+apiVersion: v1
+kind: Service
+metadata:
+  name: moodle-service
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+  selector:
+    app: moodle-app

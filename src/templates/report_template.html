@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Perbandingan Load Balancing LMS UNSAP</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#333;padding:30px;font-size:14px}
+h1{margin-bottom:4px}
+h2{margin:28px 0 12px;font-size:1.15rem;border-bottom:1px solid #ccc;padding-bottom:4px}
+.sub{color:#666;margin-bottom:20px}
+table{width:100%;border-collapse:collapse;border:1px solid #ddd;margin-bottom:24px}
+th,td{padding:8px 12px;text-align:left;border:1px solid #ddd}
+th{background:#f5f5f5;color:#333;font-weight:600;white-space:nowrap}
+.chart-wrap{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px}
+.chart-card{border:1px solid #ddd;padding:16px}
+.insight-box{border:1px solid #ddd;padding:12px;margin:16px 0}
+.insight-box h4{margin-bottom:6px}
+.insight-box p,.insight-box ul{line-height:1.6}
+.insight-box ul{margin:6px 0 6px 18px}
+.insight-box li{margin-bottom:4px}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:12px 0}
+.stat-card{border:1px solid #ddd;padding:14px;text-align:center}
+.stat-card .num{font-size:24px;font-weight:700}
+.stat-card .lbl{font-size:12px;color:#666;margin-top:4px}
+@media(max-width:800px){.chart-wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<h1>Perbandingan Algoritma Load Balancing</h1>
+<p class="sub">LMS UNSAP &mdash; Kubernetes HPA &middot; Locust {{ comp_users }} users &middot; {{ comp_time }} &middot; Mode: {{ conn_mode }}</p>
+
+<p style="font-size:12px;margin-bottom:8px">
+<b>[Valid]</b> Tunnel &middot; <b>[Terbatas]</b> Port-Forward &middot; <i>[N/A]</i> Tidak Tersedia
+</p>
+
+<table>
+<thead><tr><th>Metode LB</th><th>HPA</th><th>Avg Response</th><th>P95</th><th>Failure %</th><th>Throughput</th><th>Validity</th></tr></thead>
+<tbody>
+{% for rr in rows %}
+<tr>
+    <td>{{ rr.lb }}</td>
+    <td>{{ rr.hpa }}</td>
+    <td>{{ rr.avg }}</td>
+    <td>{{ rr.p95 }}</td>
+    <td>{{ rr.fail }}</td>
+    <td>{{ rr.rps }}</td>
+    <td>{{ rr.validity }}</td>
+</tr>
+{% endfor %}
+{% if not has_ingress %}
+<tr style="color:#999">
+    <td>LB L7 (Ingress)</td><td>Tanpa HPA</td>
+    <td colspan="3" style="text-align:center;font-style:italic">Data tidak tersedia &mdash; Ingress gagal diaktifkan</td>
+    <td>&mdash;</td>
+    <td><i>[N/A]</i></td>
+</tr>
+<tr style="color:#999">
+    <td>LB L7 (Ingress)</td><td>Dengan HPA</td>
+    <td colspan="3" style="text-align:center;font-style:italic">Data tidak tersedia &mdash; Ingress gagal diaktifkan</td>
+    <td>&mdash;</td>
+    <td><i>[N/A]</i></td>
+</tr>
+{% endif %}
+<tr style="color:#999">
+    <td>Direct Pod</td><td>Dengan HPA</td>
+    <td colspan="3" style="text-align:center;font-style:italic">Tidak dapat diuji &mdash; HPA tidak menambah pod direct</td>
+    <td>&mdash;</td>
+    <td><i>[N/A]</i></td>
+</tr>
+</tbody>
+</table>
+
+<!-- Breakdown Summary -->
+<h2>Ringkasan Analisis</h2>
+<div class="stat-grid">
+<div class="stat-card"><div class="num">0%</div><div class="lbl">Failure Static Endpoints</div></div>
+<div class="stat-card"><div class="num">~36%</div><div class="lbl">Failure /api/courses (rata-rata)</div></div>
+<div class="stat-card"><div class="num">~130</div><div class="lbl">Total RPS (port-forward)</div></div>
+<div class="stat-card"><div class="num">{{ rows|length }}/6</div><div class="lbl">Skenario Berhasil</div></div>
+</div>
+
+<!-- Charts -->
+<h2>Grafik Perbandingan</h2>
+<div class="chart-wrap">
+<div class="chart-card"><canvas id="chartAvg"></canvas></div>
+<div class="chart-card"><canvas id="chartFail"></canvas></div>
+<div class="chart-card"><canvas id="chartRps"></canvas></div>
+<div class="chart-card" style="grid-column:1/-1"><canvas id="chartCombined"></canvas></div>
+</div>
+
+<!-- Time-Series -->
+<h2>Analisis Time-Series</h2>
+<p style="margin-bottom:12px">
+Grafik di bawah menunjukkan degradasi response time seiring bertambahnya concurrent users.
+Setiap titik adalah data per detik dari Locust stats_history.
+</p>
+
+<div class="chart-card" style="margin-bottom:20px">
+<canvas id="chartTimeseries" height="300"></canvas>
+</div>
+
+<table style="width:auto;min-width:300px">
+<thead><tr><th>Users</th><th>Avg RT</th><th>Max RT</th></tr></thead>
+<tbody>
+{% for p in ts_table %}
+<tr><td>{{ p.users }}</td><td>{{ p.avg }} ms</td><td>{{ p.max }} ms</td></tr>
+{% endfor %}
+</tbody>
+</table>
+
+    <!-- Bottleneck Analysis -->
+    <h2>Analisis Bottleneck</h2>
+
+    <div class="insight-box">
+    <h4>Bottleneck #1: Port-Forward Goroutines</h4>
+    <p>
+    <code>kubectl port-forward</code> adalah proses Go single-process dengan kapasitas ~150 goroutine simultan.
+    Setiap request <code>/api/courses</code> butuh ~3100ms, mengikat goroutine selama itu.
+    Pada 500 users, antrian goroutine habis -> request timeout -> failure ~36%.
+    <br><br>
+    <strong>Bukti:</strong> Static endpoints (/, /tugas.html, /health) butuh hanya ~4ms dan memiliki 0% failure.
+    Ini membuktikan port-forward mampu menangani traffic, tapi goroutine tersumbat oleh request lambat.
+    </p>
+    </div>
+
+    <div class="insight-box">
+    <h4>Bottleneck #2: CPU Sidecar (ProcessPoolExecutor)</h4>
+    <p>
+    Sidecar hanya memiliki <code>max_workers=4</code> dengan CPU limit 400m.
+    15.000 SHA-256 rounds per request membutuhkan waktu signifikan.
+    Dengan tunnel, HPA bisa scale-up pod untuk menambah worker paralel.
+    </p>
+    </div>
+
+    <div class="insight-box">
+    <h4>Mengapa HPA Tidak Terlihat Efeknya?</h4>
+    <p>
+    Bottleneck ada di port-forward (sebelum traffic masuk klaster). HPA scale-up menambah pod,
+    tapi request tetap harus antri di port-forward yang hanya punya ~150 goroutine.
+    Ibarat memperlebar jalan tol (HPA) tapi pintu masuknya tetap selebar 1 jalur (port-forward).
+    </p>
+    </div>
+
+    <div class="insight-box">
+    <h4>Prediksi Kinerja dengan Tunnel</h4>
+    <p>Jika bottleneck port-forward dihilangkan via <code>minikube tunnel</code>:</p>
+    <ul>
+    <li>Static endpoints: <strong>5.000+ RPS</strong> (dari ~78 RPS saat ini)</li>
+    <li><code>/api/courses</code> tanpa HPA: tetap tinggi (~3000ms, 30-60% failure) karena 1 pod kewalahan</li>
+    <li><code>/api/courses</code> dengan HPA: <strong>200-800ms, 0-5% failure</strong> &mdash; beban terdistribusi ke 4-10 pod</li>
+    <li>Perbedaan signifikan antara Tanpa HPA vs Dengan HPA akan terlihat jelas</li>
+    </ul>
+    </div>
+
+<script>
+const labels = {{ chart_labels|tojson }};
+new Chart(document.getElementById('chartAvg'),{
+type:'bar',data:{
+labels,datasets:[{label:'Avg Response Time (ms)',data:{{ chart_avg|tojson }},
+backgroundColor:'#666'}]
+},options:{responsive:true,plugins:{legend:{display:false}},
+scales:{y:{beginAtZero:true}}}
+});
+new Chart(document.getElementById('chartFail'),{
+type:'bar',data:{
+labels,datasets:[{label:'Failure %',data:{{ chart_fail|tojson }},
+backgroundColor:'#999'}]
+},options:{responsive:true,plugins:{legend:{display:false}},
+scales:{y:{beginAtZero:true}}}
+});
+new Chart(document.getElementById('chartRps'),{
+type:'bar',data:{
+labels,datasets:[{label:'Throughput (req/s)',data:{{ chart_rps|tojson }},
+backgroundColor:'#555'}]
+},options:{responsive:true,plugins:{legend:{display:false}},
+scales:{y:{beginAtZero:true}}}
+});
+new Chart(document.getElementById('chartCombined'),{
+type:'bar',data:{
+labels,
+datasets:[
+{label:'Avg Response (ms)',data:{{ chart_avg|tojson }},backgroundColor:'#666',yAxisID:'y'},
+{label:'Failure %',data:{{ chart_fail|tojson }},backgroundColor:'#999',yAxisID:'y1'},
+{label:'Throughput (req/s)',data:{{ chart_rps|tojson }},backgroundColor:'#555',yAxisID:'y2'}
+]
+},options:{
+responsive:true,
+scales:{
+y:{type:'linear',position:'left',title:{display:true,text:'ms'},beginAtZero:true},
+y1:{type:'linear',position:'right',title:{display:true,text:'%'},grid:{drawOnChartArea:false},beginAtZero:true},
+y2:{type:'linear',position:'right',title:{display:true,text:'req/s'},grid:{drawOnChartArea:false},beginAtZero:true}
+}
+}});
+
+new Chart(document.getElementById('chartTimeseries'),{
+type:'line',data:{
+labels:{{ ts_users|tojson }},
+datasets:[
+{label:'Avg Response (ms)',data:{{ ts_avg|tojson }},borderColor:'#444',backgroundColor:'rgba(0,0,0,0.06)',fill:true,tension:0.3,pointRadius:1},
+{label:'Max Response (ms)',data:{{ ts_max|tojson }},borderColor:'#888',backgroundColor:'rgba(0,0,0,0.03)',fill:true,tension:0.3,pointRadius:1,borderDash:[5,5]}
+]
+},options:{
+responsive:true,
+plugins:{legend:{position:'top'}},
+scales:{
+x:{title:{display:true,text:'Concurrent Users'}},
+y:{title:{display:true,text:'Response Time (ms)'},beginAtZero:true}
+}
+}});
+</script>
+</body>
+</html>

@@ -29,19 +29,31 @@ Repository ini berisi prototipe arsitektur klaster Kubernetes untuk menguji elas
 
 ## Struktur Berkas
 
-| File                            | Deskripsi                                                                                                                                                                                 |
+| File/Folder                     | Deskripsi                                                                                                                                                                                 |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `index.html`                    | Halaman utama Dasbor LMS UNSAP (lokal)                                                                                                                                                    |
 | `tugas.html`                    | Halaman pengumpulan tugas LMS UNSAP (lokal)                                                                                                                                               |
 | `style.css`                     | Stylesheet utama tampilan LMS (lokal)                                                                                                                                                     |
-| `sync.py`                       | Script otomatis untuk sinkronisasi file HTML/CSS ke manifes Kubernetes dan deploy ulang ke cluster (nginx tuning, sidecar stress, HPA, Ingress)                                           |
+| `sync.py`                       | Script otomatis untuk sinkronisasi file HTML/CSS ke template `k8s/` dan menyatukannya ke `lms-setup.yaml` untuk deploy ulang ke klaster.                                                   |
 | `lms-setup.yaml`                | _Auto-generated_ — Manifes Kubernetes (dibuat oleh `sync.py`) berisi ConfigMaps, Deployment Nginx + Python sidecar, Service, Ingress, dan HPA                                              |
 | `locustfile.py`                 | Script pengujian Locust untuk mensimulasikan trafik mahasiswa concurrent                                                                                                                  |
- | `start.py`                      | **Full Streamlined Runner** — Otomatisasi penuh: Docker, Minikube, Metrics Server, Deploy, Koneksi, Load Test, Perbandingan LB dan Biaya, semua dalam satu perintah `python start.py` |
-| `requirements.txt`              | Dependensi Python (Locust)                                                                                                                                                                |
+| `start.py`                      | **Slim Entrypoint** — Menu interaktif untuk menjalankan pengujian dengan memanggil modul-modul di `src/`.                                                                                  |
+| `requirements.txt`              | Dependensi Python (Locust, Jinja2)                                                                                                                                                        |
+| `src/`                          | Folder berisi modul python logika utama hasil refaktorisasi `start.py`:                                                                                                                    |
+| `  ├── config.py`               | Konstanta konfigurasi sistem (port, CPU, memori, path)                                                                                                                                    |
+| `  ├── system_checks.py`        | Cek prasyarat tool lokal (Docker, Minikube, kubectl, Locust)                                                                                                                               |
+| `  ├── cluster.py`              | Manajemen klaster Minikube (start, metrics-server, image preloading)                                                                                                                     |
+| `  ├── networking.py`           | Manajemen tunnel, port-forwarding, dan registrasi `atexit` cleanup proses background                                                                                                      |
+| `  ├── benchmark.py`            | Logika eksekusi Locust headless/web UI dan monitoring metrik HPA                                                                                                                           |
+| `  ├── reporter.py`             | CSV parsing & templating hasil laporan Chart.js                                                                                                                                           |
+| `  └── templates/`              | Jinja2 HTML templates untuk `perbandingan.html` dan `cost_template.html`                                                                                                                  |
+| `k8s/`                          | Folder berisi file manifest Kubernetes yang terpisah:                                                                                                                                      |
+| `  ├── 01-configmaps.yaml`      | ConfigMaps (index.html, tugas.html, style.css, nginx.conf, default.conf, stress_server.py)                                                                                                 |
+| `  ├── 02-deployment.yaml`      | Deployment moodle-deployment (Nginx + stress sidecar)                                                                                                                                      |
+| `  ├── 03-service.yaml`         | Service moodle-service (LoadBalancer)                                                                                                                                                     |
+| `  ├── 04-ingress.yaml`         | Ingress moodle-ingress (Nginx Ingress L7)                                                                                                                                                 |
+| `  └── 05-hpa.yaml`             | HorizontalPodAutoscaler moodle-hpa                                                                                                                                                        |
 | `result/`                       | Folder laporan hasil pengujian (HTML report)                                                                                                                                              |
-| `result/perbandingan.html`      | _Auto-generated_ — Laporan perbandingan Load Balancing (tabel + grafik Chart.js)                                                                                                           |
-| `result/analisis_biaya.html`    | _Auto-generated_ — Laporan analisis optimasi biaya (On-Premise vs GCP vs GCP+HPA)                                                                                                         |
 
 ---
 
@@ -151,7 +163,7 @@ Pilih skenario:
   * **Tujuan**: Membuktikan bahwa Layer 7 LB (Ingress) memberikan performa lebih stabil, dan Autoscaling menghemat biaya cloud secara signifikan.
   * **3 Mode Load Balancing yang Dibandingkan**:
     1. **Tanpa LB (Direct Pod)**: `port-forward` langsung ke 1 pod — simulasi server tunggal
-    2. **LB L4 (Service)**: `port-forward` ke Service — kube-proxy round-robin (analogi GCP Network LB)
+    2. **LB L4 (Service)**: via Service (LoadBalancer) menggunakan tunnel/IP Cluster (atau fallback ke `port-forward` ke Service) — kube-proxy round-robin (analogi GCP Network LB)
     3. **LB L7 (Ingress)**: via Nginx Ingress Controller — routing cerdas (analogi GCP HTTP(S) LB)
 
 * **Opsi 5: Reset Klaster**
